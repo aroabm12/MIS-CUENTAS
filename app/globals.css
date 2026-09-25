@@ -325,8 +325,9 @@ button.borrar {
   text-align: left;
   cursor: pointer;
   display: block;
+  color: var(--color-text);
 }
-.var-item-clicable:hover { opacity: 0.85; }
+.var-item-clicable:hover { background: none; opacity: 0.85; }
 .var-desplegable {
   margin-top: 8px;
   padding: 8px 10px;
