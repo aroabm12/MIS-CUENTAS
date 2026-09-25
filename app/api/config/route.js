@@ -2,16 +2,17 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "../../../lib/db";
+import { conManejoErrores } from "../../../lib/api-utils";
 
-export async function GET() {
+export const GET = conManejoErrores(async function GET() {
   await ensureSchema();
   const rows = await sql`SELECT clave, valor FROM config`;
   const config = {};
   for (const row of rows) config[row.clave] = Number(row.valor);
   return NextResponse.json(config);
-}
+});
 
-export async function PUT(request) {
+export const PUT = conManejoErrores(async function PUT(request) {
   await ensureSchema();
   const body = await request.json();
   const permitido = ["saldo_inicial", "meta_min", "meta_max"];
@@ -23,4 +24,4 @@ export async function PUT(request) {
     `;
   }
   return NextResponse.json({ ok: true });
-}
+});
