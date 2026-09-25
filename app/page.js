@@ -312,6 +312,12 @@ export default function Home() {
       <h1>Mis Cuentas</h1>
       <p className="subtitle">Tarjeta y ahorro, todo junto en un solo número.</p>
 
+      {error && (
+        <div className="card error-msg" style={{ marginBottom: 20 }}>
+          {error}
+        </div>
+      )}
+
       <div className="card saldo-actual">
         <div className="label">Tienes ahora mismo</div>
         <div className="valor">{loading ? "…" : money(saldoActual)}</div>
