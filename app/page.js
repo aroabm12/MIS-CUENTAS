@@ -43,6 +43,7 @@ export default function Home() {
   const [gastosFijos, setGastosFijos] = useState([]);
   const [ingresosFijos, setIngresosFijos] = useState([]);
   const [presupuestoVariable, setPresupuestoVariable] = useState([]);
+  const [overridesMensuales, setOverridesMensuales] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [editandoSaldo, setEditandoSaldo] = useState(false);
@@ -64,19 +65,22 @@ export default function Home() {
   const [nuevaCat, setNuevaCat] = useState({ concepto: "", importe: "" });
   const [mostrarTodosMovs, setMostrarTodosMovs] = useState(false);
   const [error, setError] = useState("");
+  const [editandoIngPrevistos, setEditandoIngPrevistos] = useState(false);
+  const [ingPrevistosInput, setIngPrevistosInput] = useState("");
 
   async function cargarTodo() {
     setLoading(true);
     setError("");
     try {
-      const [rMov, rCfg, rGF, rIF, rVar] = await Promise.all([
+      const [rMov, rCfg, rGF, rIF, rVar, rOv] = await Promise.all([
         fetch("/api/movimientos"),
         fetch("/api/config"),
         fetch("/api/gastos-fijos"),
         fetch("/api/ingresos-fijos"),
         fetch("/api/presupuesto-variable"),
+        fetch("/api/overrides-mensuales"),
       ]);
-      for (const r of [rMov, rCfg, rGF, rIF, rVar]) {
+      for (const r of [rMov, rCfg, rGF, rIF, rVar, rOv]) {
         if (!r.ok) throw new Error(`Error ${r.status} cargando datos`);
       }
       const dMov = await rMov.json();
@@ -84,12 +88,14 @@ export default function Home() {
       const dGF = await rGF.json();
       const dIF = await rIF.json();
       const dVar = await rVar.json();
+      const dOv = await rOv.json();
       setMovimientos(dMov.movimientos);
       setSaldoInicial(dMov.saldoInicial);
       setConfig(dCfg);
       setGastosFijos(dGF.gastosFijos);
       setIngresosFijos(dIF.ingresosFijos);
       setPresupuestoVariable(dVar.presupuestoVariable);
+      setOverridesMensuales(dOv.overrides);
     } catch (err) {
       console.error(err);
       setError("No se ha podido cargar: " + err.message);
@@ -118,8 +124,16 @@ export default function Home() {
 
   // Previsión del mes, como en el Excel: lo que cobras normalmente menos
   // tus gastos fijos habituales menos lo que quieres ahorrar = lo que
-  // te queda libre para gastar ese mes.
-  const ingresosPrevistos = ingresosFijos.reduce((s, iff) => s + Number(iff.importe), 0);
+  // te queda libre para gastar ese mes. "Ingresos previstos" se puede
+  // corregir mes a mes (p.ej. un mes de transición sin cobro) sin que
+  // afecte a los demás meses, que siguen usando el valor normal.
+  const claveMes = `${mesSeleccionado.getFullYear()}-${String(mesSeleccionado.getMonth() + 1).padStart(2, "0")}`;
+  const ingresosPrevistosDefault = ingresosFijos.reduce((s, iff) => s + Number(iff.importe), 0);
+  const overrideMes = overridesMensuales.find((o) => o.anio_mes === claveMes);
+  const ingresosPrevistos =
+    overrideMes && overrideMes.ingresos_previstos !== null
+      ? Number(overrideMes.ingresos_previstos)
+      : ingresosPrevistosDefault;
   const gastosFijosPrevistos = gastosFijos.reduce((s, gf) => s + Number(gf.importe), 0);
   const disponibleParaGastar = ingresosPrevistos - gastosFijosPrevistos - metaMin;
 
@@ -257,6 +271,21 @@ export default function Home() {
       }),
     });
     setEditandoMeta(false);
+    cargarTodo();
+  }
+
+  async function guardarIngresosPrevistosMes() {
+    await fetch("/api/overrides-mensuales", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anioMes: claveMes, ingresosPrevistos: Number(ingPrevistosInput) }),
+    });
+    setEditandoIngPrevistos(false);
+    cargarTodo();
+  }
+
+  async function quitarOverrideIngresosMes() {
+    await fetch(`/api/overrides-mensuales?anioMes=${claveMes}`, { method: "DELETE" });
     cargarTodo();
   }
 
@@ -471,9 +500,52 @@ export default function Home() {
         </div>
 
         <div className="presupuesto-linea">
-          <span>Ingresos previstos</span>
+          <span>
+            Ingresos previstos
+            {!editandoIngPrevistos && (
+              <button
+                type="button"
+                className="link-btn"
+                style={{ marginLeft: 6 }}
+                onClick={() => {
+                  setIngPrevistosInput(String(ingresosPrevistos));
+                  setEditandoIngPrevistos(true);
+                }}
+              >
+                editar
+              </button>
+            )}
+          </span>
           <span>{money(ingresosPrevistos)}</span>
         </div>
+        {overrideMes && !editandoIngPrevistos && (
+          <div className="var-item-bottom" style={{ marginTop: -6, marginBottom: 8 }}>
+            Ajustado solo para {nombreMes} (normalmente {money(ingresosPrevistosDefault)})
+          </div>
+        )}
+        {editandoIngPrevistos && (
+          <div className="editar-saldo" style={{ marginBottom: 10 }}>
+            <input
+              type="number"
+              step="0.01"
+              value={ingPrevistosInput}
+              onChange={(e) => setIngPrevistosInput(e.target.value)}
+            />
+            <button type="button" onClick={guardarIngresosPrevistosMes}>Guardar</button>
+            {overrideMes && (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  quitarOverrideIngresosMes();
+                  setEditandoIngPrevistos(false);
+                }}
+              >
+                usar el normal
+              </button>
+            )}
+          </div>
+        )}
         <div className="presupuesto-linea resta">
           <span>− Gastos fijos</span>
           <span>{money(gastosFijosPrevistos)}</span>
