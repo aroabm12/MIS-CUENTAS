@@ -56,6 +56,8 @@ export default function Home() {
   const [concepto, setConcepto] = useState("");
   const [importe, setImporte] = useState("");
   const [tipo, setTipo] = useState("gasto");
+  const [categoriaId, setCategoriaId] = useState("");
+  const [movEditandoId, setMovEditandoId] = useState(null);
 
   const [mostrarGestion, setMostrarGestion] = useState(false);
   const [nuevoGF, setNuevoGF] = useState({ concepto: "", importe: "", dia: "" });
@@ -182,7 +184,11 @@ export default function Home() {
   const variablesConGasto = presupuestoVariable.map((cat) => {
     const clave = palabraClave(cat.concepto);
     const gastado = movDelMes
-      .filter((m) => Number(m.gasto) > 0 && m.concepto.toLowerCase().includes(clave))
+      .filter(
+        (m) =>
+          Number(m.gasto) > 0 &&
+          (m.categoria_id ? m.categoria_id === cat.id : m.concepto.toLowerCase().includes(clave))
+      )
       .reduce((s, m) => s + Number(m.gasto), 0);
     const presupuestado = Number(cat.importe);
     const resta = presupuestado - gastado;
@@ -203,6 +209,7 @@ export default function Home() {
           concepto,
           gasto: tipo === "gasto" ? importe : 0,
           ingreso: tipo === "ingreso" ? importe : 0,
+          categoriaId: tipo === "gasto" && categoriaId ? Number(categoriaId) : null,
         }),
       });
       if (!res.ok) {
@@ -211,10 +218,38 @@ export default function Home() {
       }
       setConcepto("");
       setImporte("");
+      setCategoriaId("");
       cargarTodo();
     } catch (err) {
       console.error(err);
       setError("No se ha podido guardar: " + err.message);
+    }
+  }
+
+  async function actualizarMovimiento(m) {
+    setError("");
+    try {
+      const res = await fetch("/api/movimientos", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: m.id,
+          fecha: m.fecha,
+          concepto: m.concepto,
+          gasto: m.tipo === "gasto" ? m.importe : 0,
+          ingreso: m.tipo === "ingreso" ? m.importe : 0,
+          categoriaId: m.tipo === "gasto" && m.categoriaId ? Number(m.categoriaId) : null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Error ${res.status} al guardar`);
+      }
+      setMovEditandoId(null);
+      cargarTodo();
+    } catch (err) {
+      console.error(err);
+      setError("No se ha podido guardar el cambio: " + err.message);
     }
   }
 
@@ -681,6 +716,17 @@ export default function Home() {
             <label>Concepto</label>
             <input type="text" placeholder="p.ej. comida, coche, paro..." value={concepto} onChange={(e) => setConcepto(e.target.value)} />
           </div>
+          {tipo === "gasto" && (
+            <div className="full">
+              <label>Categoría (opcional)</label>
+              <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
+                <option value="">Sin categoría / gasto fijo</option>
+                {presupuestoVariable.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.concepto}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <button type="submit">Añadir</button>
           {error && <div className="error-msg">{error}</div>}
         </form>
@@ -705,18 +751,31 @@ export default function Home() {
             </tr>
           </thead>
           <tbody>
-            {(mostrarTodosMovs ? filas : movDelMes).map((m) => (
-              <tr key={m.id}>
-                <td>{new Date(m.fecha).toLocaleDateString("es-ES")}</td>
-                <td>{m.concepto}</td>
-                <td className="num gasto">{Number(m.gasto) ? money(m.gasto) : ""}</td>
-                <td className="num ingreso">{Number(m.ingreso) ? money(m.ingreso) : ""}</td>
-                <td className="num saldo-col">{money(m.saldo)}</td>
-                <td>
-                  <button className="borrar" onClick={() => borrar(m.id)}>✕</button>
-                </td>
-              </tr>
-            ))}
+            {(mostrarTodosMovs ? filas : movDelMes).map((m) =>
+              movEditandoId === m.id ? (
+                <FilaMovimientoEditable
+                  key={m.id}
+                  m={m}
+                  categorias={presupuestoVariable}
+                  onGuardar={actualizarMovimiento}
+                  onCancelar={() => setMovEditandoId(null)}
+                />
+              ) : (
+                <tr key={m.id}>
+                  <td>{new Date(m.fecha).toLocaleDateString("es-ES")}</td>
+                  <td>{m.concepto}</td>
+                  <td className="num gasto">{Number(m.gasto) ? money(m.gasto) : ""}</td>
+                  <td className="num ingreso">{Number(m.ingreso) ? money(m.ingreso) : ""}</td>
+                  <td className="num saldo-col">{money(m.saldo)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button type="button" className="mini-btn" onClick={() => setMovEditandoId(m.id)}>
+                      editar
+                    </button>{" "}
+                    <button className="borrar" onClick={() => borrar(m.id)}>✕</button>
+                  </td>
+                </tr>
+              )
+            )}
             {!loading && (mostrarTodosMovs ? filas : movDelMes).length === 0 && (
               <tr>
                 <td colSpan={6} style={{ color: "#888", padding: "16px 0" }}>
@@ -920,5 +979,70 @@ function CategoriaEditable({ cat, onGuardar, onBorrar }) {
       )}
       <button type="button" className="borrar" onClick={() => onBorrar(cat.id)}>✕</button>
     </div>
+  );
+}
+
+function FilaMovimientoEditable({ m, categorias, onGuardar, onCancelar }) {
+  const [local, setLocal] = useState({
+    fecha: m.fecha ? new Date(m.fecha).toISOString().slice(0, 10) : "",
+    concepto: m.concepto,
+    tipo: Number(m.gasto) > 0 ? "gasto" : "ingreso",
+    importe: Number(m.gasto) > 0 ? m.gasto : m.ingreso,
+    categoriaId: m.categoria_id || "",
+  });
+  return (
+    <tr>
+      <td colSpan={6}>
+        <div className="fila-edit">
+          <div className="tipo-toggle" style={{ marginBottom: 8 }}>
+            <button
+              type="button"
+              className={local.tipo === "gasto" ? "activo gasto" : ""}
+              onClick={() => setLocal({ ...local, tipo: "gasto" })}
+            >
+              Gasto
+            </button>
+            <button
+              type="button"
+              className={local.tipo === "ingreso" ? "activo ingreso" : ""}
+              onClick={() => setLocal({ ...local, tipo: "ingreso" })}
+            >
+              Ingreso
+            </button>
+          </div>
+          <input
+            type="date"
+            value={local.fecha}
+            onChange={(e) => setLocal({ ...local, fecha: e.target.value })}
+          />
+          <input
+            type="number"
+            step="0.01"
+            value={local.importe}
+            onChange={(e) => setLocal({ ...local, importe: e.target.value })}
+          />
+          <input
+            type="text"
+            value={local.concepto}
+            onChange={(e) => setLocal({ ...local, concepto: e.target.value })}
+          />
+          {local.tipo === "gasto" && (
+            <select
+              value={local.categoriaId}
+              onChange={(e) => setLocal({ ...local, categoriaId: e.target.value })}
+            >
+              <option value="">Sin categoría / gasto fijo</option>
+              {categorias.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.concepto}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => onGuardar({ ...local, id: m.id })}>Guardar</button>
+            <button type="button" className="link-btn" onClick={onCancelar}>Cancelar</button>
+          </div>
+        </div>
+      </td>
+    </tr>
   );
 }
