@@ -10,12 +10,38 @@ function mismoMes(fechaStr, ref) {
   return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
 }
 
+// Comprueba si un campo "día" (p.ej. "1", "1-5", "26", "variable") coincide
+// con el día del mes de hoy. Los días aproximados/variables no se marcan
+// automáticamente como "hoy" porque no se puede saber con certeza.
+function diaEsHoy(diaStr, diaHoy) {
+  if (!diaStr) return false;
+  const limpio = diaStr.trim();
+  if (/^\d+$/.test(limpio)) {
+    return Number(limpio) === diaHoy;
+  }
+  const rango = limpio.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (rango) {
+    const [, a, b] = rango;
+    return diaHoy >= Number(a) && diaHoy <= Number(b);
+  }
+  return false;
+}
+
+// Para emparejar un movimiento con una categoría variable usamos la
+// primera palabra del nombre de la categoría (p.ej. "Comida / supermercado"
+// -> "comida"), porque el concepto que escribes suele ser más corto.
+function palabraClave(concepto) {
+  return concepto.split("/")[0].split(" y ")[0].trim().toLowerCase();
+}
+
 export default function Home() {
   const hoy = useMemo(() => new Date(), []);
   const [movimientos, setMovimientos] = useState([]);
   const [saldoInicial, setSaldoInicial] = useState(0);
   const [config, setConfig] = useState({ meta_min: 450, meta_max: 500 });
   const [gastosFijos, setGastosFijos] = useState([]);
+  const [ingresosFijos, setIngresosFijos] = useState([]);
+  const [presupuestoVariable, setPresupuestoVariable] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [editandoSaldo, setEditandoSaldo] = useState(false);
@@ -31,21 +57,41 @@ export default function Home() {
 
   const [mostrarGestion, setMostrarGestion] = useState(false);
   const [nuevoGF, setNuevoGF] = useState({ concepto: "", importe: "", dia: "" });
+  const [mostrarGestionIng, setMostrarGestionIng] = useState(false);
+  const [nuevoIF, setNuevoIF] = useState({ concepto: "", importe: "", dia: "" });
+  const [mostrarGestionVar, setMostrarGestionVar] = useState(false);
+  const [nuevaCat, setNuevaCat] = useState({ concepto: "", importe: "" });
+  const [error, setError] = useState("");
 
   async function cargarTodo() {
     setLoading(true);
-    const [rMov, rCfg, rGF] = await Promise.all([
-      fetch("/api/movimientos"),
-      fetch("/api/config"),
-      fetch("/api/gastos-fijos"),
-    ]);
-    const dMov = await rMov.json();
-    const dCfg = await rCfg.json();
-    const dGF = await rGF.json();
-    setMovimientos(dMov.movimientos);
-    setSaldoInicial(dMov.saldoInicial);
-    setConfig(dCfg);
-    setGastosFijos(dGF.gastosFijos);
+    setError("");
+    try {
+      const [rMov, rCfg, rGF, rIF, rVar] = await Promise.all([
+        fetch("/api/movimientos"),
+        fetch("/api/config"),
+        fetch("/api/gastos-fijos"),
+        fetch("/api/ingresos-fijos"),
+        fetch("/api/presupuesto-variable"),
+      ]);
+      for (const r of [rMov, rCfg, rGF, rIF, rVar]) {
+        if (!r.ok) throw new Error(`Error ${r.status} cargando datos`);
+      }
+      const dMov = await rMov.json();
+      const dCfg = await rCfg.json();
+      const dGF = await rGF.json();
+      const dIF = await rIF.json();
+      const dVar = await rVar.json();
+      setMovimientos(dMov.movimientos);
+      setSaldoInicial(dMov.saldoInicial);
+      setConfig(dCfg);
+      setGastosFijos(dGF.gastosFijos);
+      setIngresosFijos(dIF.ingresosFijos);
+      setPresupuestoVariable(dVar.presupuestoVariable);
+    } catch (err) {
+      console.error(err);
+      setError("No se ha podido cargar: " + err.message);
+    }
     setLoading(false);
   }
 
@@ -77,22 +123,52 @@ export default function Home() {
     return { ...gf, registrado };
   });
 
+  const diaHoy = hoy.getDate();
+  const gastosHoy = gastosFijosConEstado.filter((gf) => diaEsHoy(gf.dia, diaHoy) && !gf.registrado);
+  const ingresosHoy = ingresosFijos.filter((iff) => {
+    const yaRegistrado = movDelMes.some(
+      (m) => Number(m.ingreso) > 0 && m.concepto.toLowerCase().includes(iff.concepto.toLowerCase())
+    );
+    return diaEsHoy(iff.dia, diaHoy) && !yaRegistrado;
+  });
+
+  const variablesConGasto = presupuestoVariable.map((cat) => {
+    const clave = palabraClave(cat.concepto);
+    const gastado = movDelMes
+      .filter((m) => Number(m.gasto) > 0 && m.concepto.toLowerCase().includes(clave))
+      .reduce((s, m) => s + Number(m.gasto), 0);
+    const presupuestado = Number(cat.importe);
+    const resta = presupuestado - gastado;
+    const porcentaje = presupuestado > 0 ? Math.min(100, (gastado / presupuestado) * 100) : gastado > 0 ? 100 : 0;
+    return { ...cat, gastado, resta, porcentaje };
+  });
+
   async function guardarMovimiento(e) {
     e.preventDefault();
     if (!concepto || !importe) return;
-    await fetch("/api/movimientos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fecha,
-        concepto,
-        gasto: tipo === "gasto" ? importe : 0,
-        ingreso: tipo === "ingreso" ? importe : 0,
-      }),
-    });
-    setConcepto("");
-    setImporte("");
-    cargarTodo();
+    setError("");
+    try {
+      const res = await fetch("/api/movimientos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha,
+          concepto,
+          gasto: tipo === "gasto" ? importe : 0,
+          ingreso: tipo === "ingreso" ? importe : 0,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Error ${res.status} al guardar`);
+      }
+      setConcepto("");
+      setImporte("");
+      cargarTodo();
+    } catch (err) {
+      console.error(err);
+      setError("No se ha podido guardar: " + err.message);
+    }
   }
 
   async function registrarRapido(gf) {
@@ -104,6 +180,20 @@ export default function Home() {
         concepto: gf.concepto,
         gasto: gf.importe,
         ingreso: 0,
+      }),
+    });
+    cargarTodo();
+  }
+
+  async function registrarIngresoRapido(iff) {
+    await fetch("/api/movimientos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fecha: new Date().toISOString().slice(0, 10),
+        concepto: iff.concepto,
+        gasto: 0,
+        ingreso: iff.importe,
       }),
     });
     cargarTodo();
@@ -163,6 +253,58 @@ export default function Home() {
     cargarTodo();
   }
 
+  async function actualizarIF(iff) {
+    await fetch("/api/ingresos-fijos", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(iff),
+    });
+    cargarTodo();
+  }
+
+  async function borrarIF(id) {
+    await fetch(`/api/ingresos-fijos?id=${id}`, { method: "DELETE" });
+    cargarTodo();
+  }
+
+  async function anadirIF(e) {
+    e.preventDefault();
+    if (!nuevoIF.concepto) return;
+    await fetch("/api/ingresos-fijos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nuevoIF),
+    });
+    setNuevoIF({ concepto: "", importe: "", dia: "" });
+    cargarTodo();
+  }
+
+  async function actualizarCat(cat) {
+    await fetch("/api/presupuesto-variable", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cat),
+    });
+    cargarTodo();
+  }
+
+  async function borrarCat(id) {
+    await fetch(`/api/presupuesto-variable?id=${id}`, { method: "DELETE" });
+    cargarTodo();
+  }
+
+  async function anadirCat(e) {
+    e.preventDefault();
+    if (!nuevaCat.concepto) return;
+    await fetch("/api/presupuesto-variable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nuevaCat),
+    });
+    setNuevaCat({ concepto: "", importe: "" });
+    cargarTodo();
+  }
+
   const nombreMes = hoy.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
 
   return (
@@ -195,6 +337,42 @@ export default function Home() {
               onChange={(e) => setNuevoSaldoInicial(e.target.value)}
             />
             <button type="button" onClick={guardarSaldoInicial}>Guardar</button>
+          </div>
+        )}
+      </div>
+
+      <div className={"card tarjeta-hoy" + (ingresosHoy.length || gastosHoy.length ? " con-eventos" : "")}>
+        <strong style={{ textTransform: "capitalize" }}>
+          Hoy, {hoy.toLocaleDateString("es-ES", { day: "numeric", month: "long" })}
+        </strong>
+        {ingresosHoy.length === 0 && gastosHoy.length === 0 ? (
+          <p className="subtitle" style={{ margin: "8px 0 0" }}>
+            No tienes ningún ingreso ni gasto fijo previsto para hoy.
+          </p>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {ingresosHoy.map((iff) => (
+              <div key={"ing-" + iff.id} className="hoy-item ingreso">
+                <span>🎉 Hoy cobras: {iff.concepto}</span>
+                <span className="gf-right">
+                  {money(iff.importe)}
+                  <button type="button" className="mini-btn" onClick={() => registrarIngresoRapido(iff)}>
+                    Apuntar
+                  </button>
+                </span>
+              </div>
+            ))}
+            {gastosHoy.map((gf) => (
+              <div key={"gas-" + gf.id} className="hoy-item gasto">
+                <span>💸 Hoy se te cobra: {gf.concepto}</span>
+                <span className="gf-right">
+                  {money(gf.importe)}
+                  <button type="button" className="mini-btn" onClick={() => registrarRapido(gf)}>
+                    Apuntar
+                  </button>
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -268,6 +446,34 @@ export default function Home() {
       </div>
 
       <div className="card">
+        <strong>Gastos variables de este mes</strong>
+        <p className="subtitle" style={{ margin: "6px 0 12px" }}>
+          Se rellena solo con lo que escribes abajo en "Añadir movimiento" si el concepto se parece al nombre de la categoría.
+        </p>
+        {variablesConGasto.map((cat) => (
+          <div key={cat.id} className="var-item">
+            <div className="var-item-top">
+              <span>{cat.concepto}</span>
+              <span className={cat.resta < 0 ? "var-resta negativo" : "var-resta"}>
+                {cat.resta < 0
+                  ? `Te has pasado ${money(Math.abs(cat.resta))}`
+                  : `Te quedan ${money(cat.resta)}`}
+              </span>
+            </div>
+            <div className="barra-fondo">
+              <div
+                className={"barra-relleno" + (cat.resta < 0 ? " excedido" : "")}
+                style={{ width: `${cat.porcentaje}%` }}
+              />
+            </div>
+            <div className="var-item-bottom">
+              {money(cat.gastado)} de {money(cat.importe)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
         <strong>Añadir movimiento</strong>
         <form className="nuevo" onSubmit={guardarMovimiento}>
           <div className="tipo-toggle">
@@ -291,6 +497,7 @@ export default function Home() {
             <input type="text" placeholder="p.ej. comida, coche, paro..." value={concepto} onChange={(e) => setConcepto(e.target.value)} />
           </div>
           <button type="submit">Añadir</button>
+          {error && <div className="error-msg">{error}</div>}
         </form>
       </div>
 
@@ -329,6 +536,81 @@ export default function Home() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="card">
+        <button type="button" className="link-btn" onClick={() => setMostrarGestionVar((v) => !v)}>
+          {mostrarGestionVar ? "Ocultar gestión de gastos variables" : "Gestionar mis categorías de gastos variables"}
+        </button>
+        {mostrarGestionVar && (
+          <div style={{ marginTop: 12 }}>
+            {presupuestoVariable.map((cat) => (
+              <CategoriaEditable key={cat.id} cat={cat} onGuardar={actualizarCat} onBorrar={borrarCat} />
+            ))}
+            <form className="nuevo" onSubmit={anadirCat} style={{ marginTop: 16 }}>
+              <div className="full">
+                <label>Categoría nueva</label>
+                <input
+                  type="text"
+                  value={nuevaCat.concepto}
+                  onChange={(e) => setNuevaCat({ ...nuevaCat, concepto: e.target.value })}
+                />
+              </div>
+              <div className="full">
+                <label>Presupuesto mensual (€)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={nuevaCat.importe}
+                  onChange={(e) => setNuevaCat({ ...nuevaCat, importe: e.target.value })}
+                />
+              </div>
+              <button type="submit">Añadir categoría</button>
+            </form>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <button type="button" className="link-btn" onClick={() => setMostrarGestionIng((v) => !v)}>
+          {mostrarGestionIng ? "Ocultar gestión de ingresos fijos" : "Gestionar mis ingresos fijos (el Paro, etc.)"}
+        </button>
+        {mostrarGestionIng && (
+          <div style={{ marginTop: 12 }}>
+            {ingresosFijos.map((iff) => (
+              <GastoFijoEditable key={iff.id} gf={iff} onGuardar={actualizarIF} onBorrar={borrarIF} />
+            ))}
+            <form className="nuevo" onSubmit={anadirIF} style={{ marginTop: 16 }}>
+              <div>
+                <label>Concepto nuevo</label>
+                <input
+                  type="text"
+                  value={nuevoIF.concepto}
+                  onChange={(e) => setNuevoIF({ ...nuevoIF, concepto: e.target.value })}
+                />
+              </div>
+              <div>
+                <label>Importe (€)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={nuevoIF.importe}
+                  onChange={(e) => setNuevoIF({ ...nuevoIF, importe: e.target.value })}
+                />
+              </div>
+              <div className="full">
+                <label>Día del mes</label>
+                <input
+                  type="text"
+                  placeholder="p.ej. 10"
+                  value={nuevoIF.dia}
+                  onChange={(e) => setNuevoIF({ ...nuevoIF, dia: e.target.value })}
+                />
+              </div>
+              <button type="submit">Añadir ingreso fijo</button>
+            </form>
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -404,6 +686,32 @@ function GastoFijoEditable({ gf, onGuardar, onBorrar }) {
         </button>
       )}
       <button type="button" className="borrar" onClick={() => onBorrar(gf.id)}>✕</button>
+    </div>
+  );
+}
+
+function CategoriaEditable({ cat, onGuardar, onBorrar }) {
+  const [local, setLocal] = useState(cat);
+  const cambiado = local.concepto !== cat.concepto || Number(local.importe) !== Number(cat.importe);
+  return (
+    <div className="gf-editable cat-editable">
+      <input
+        type="text"
+        value={local.concepto}
+        onChange={(e) => setLocal({ ...local, concepto: e.target.value })}
+      />
+      <input
+        type="number"
+        step="0.01"
+        value={local.importe}
+        onChange={(e) => setLocal({ ...local, importe: e.target.value })}
+      />
+      {cambiado && (
+        <button type="button" className="mini-btn" onClick={() => onGuardar(local)}>
+          Guardar
+        </button>
+      )}
+      <button type="button" className="borrar" onClick={() => onBorrar(cat.id)}>✕</button>
     </div>
   );
 }
