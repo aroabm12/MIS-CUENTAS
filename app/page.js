@@ -36,6 +36,7 @@ function palabraClave(concepto) {
 
 export default function Home() {
   const hoy = useMemo(() => new Date(), []);
+  const [mesSeleccionado, setMesSeleccionado] = useState(() => new Date());
   const [movimientos, setMovimientos] = useState([]);
   const [saldoInicial, setSaldoInicial] = useState(0);
   const [config, setConfig] = useState({ meta_min: 450, meta_max: 500 });
@@ -61,6 +62,7 @@ export default function Home() {
   const [nuevoIF, setNuevoIF] = useState({ concepto: "", importe: "", dia: "" });
   const [mostrarGestionVar, setMostrarGestionVar] = useState(false);
   const [nuevaCat, setNuevaCat] = useState({ concepto: "", importe: "" });
+  const [mostrarTodosMovs, setMostrarTodosMovs] = useState(false);
   const [error, setError] = useState("");
 
   async function cargarTodo() {
@@ -106,13 +108,38 @@ export default function Home() {
   });
   const saldoActual = filas.length ? filas[filas.length - 1].saldo : saldoInicial;
 
-  const movDelMes = filas.filter((m) => mismoMes(m.fecha, hoy));
+  const movDelMesReal = filas.filter((m) => mismoMes(m.fecha, hoy));
+  const movDelMes = filas.filter((m) => mismoMes(m.fecha, mesSeleccionado));
   const ingresosMes = movDelMes.reduce((s, m) => s + Number(m.ingreso), 0);
   const gastosMes = movDelMes.reduce((s, m) => s + Number(m.gasto), 0);
   const ahorroRealMes = ingresosMes - gastosMes;
   const metaMin = Number(config.meta_min ?? 450);
   const metaMax = Number(config.meta_max ?? 500);
-  const enMeta = ahorroRealMes >= metaMin;
+
+  // Previsión del mes, como en el Excel: lo que cobras normalmente menos
+  // tus gastos fijos habituales menos lo que quieres ahorrar = lo que
+  // te queda libre para gastar ese mes.
+  const ingresosPrevistos = ingresosFijos.reduce((s, iff) => s + Number(iff.importe), 0);
+  const gastosFijosPrevistos = gastosFijos.reduce((s, gf) => s + Number(gf.importe), 0);
+  const disponibleParaGastar = ingresosPrevistos - gastosFijosPrevistos - metaMin;
+
+  // De lo que ya has gastado este mes, la parte que NO es un gasto fijo
+  // (comida, ocio, lo que sea) es lo que consume ese "disponible".
+  const gastadoVariableReal = movDelMes
+    .filter(
+      (m) =>
+        Number(m.gasto) > 0 &&
+        !gastosFijos.some((gf) => m.concepto.toLowerCase().includes(gf.concepto.toLowerCase()))
+    )
+    .reduce((s, m) => s + Number(m.gasto), 0);
+  const restaDisponible = disponibleParaGastar - gastadoVariableReal;
+  const porcentajeDisponible =
+    disponibleParaGastar > 0
+      ? Math.min(100, (gastadoVariableReal / disponibleParaGastar) * 100)
+      : gastadoVariableReal > 0
+      ? 100
+      : 0;
+  const enMeta = restaDisponible >= 0;
 
   const gastosFijosConEstado = gastosFijos.map((gf) => {
     const registrado = movDelMes.some(
@@ -124,9 +151,15 @@ export default function Home() {
   });
 
   const diaHoy = hoy.getDate();
-  const gastosHoy = gastosFijosConEstado.filter((gf) => diaEsHoy(gf.dia, diaHoy) && !gf.registrado);
+  const gastosFijosHoyEstado = gastosFijos.map((gf) => ({
+    ...gf,
+    registrado: movDelMesReal.some(
+      (m) => Number(m.gasto) > 0 && m.concepto.toLowerCase().includes(gf.concepto.toLowerCase())
+    ),
+  }));
+  const gastosHoy = gastosFijosHoyEstado.filter((gf) => diaEsHoy(gf.dia, diaHoy) && !gf.registrado);
   const ingresosHoy = ingresosFijos.filter((iff) => {
-    const yaRegistrado = movDelMes.some(
+    const yaRegistrado = movDelMesReal.some(
       (m) => Number(m.ingreso) > 0 && m.concepto.toLowerCase().includes(iff.concepto.toLowerCase())
     );
     return diaEsHoy(iff.dia, diaHoy) && !yaRegistrado;
@@ -305,7 +338,42 @@ export default function Home() {
     cargarTodo();
   }
 
-  const nombreMes = hoy.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const nombreMes = mesSeleccionado.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+
+  function mesAnterior() {
+    setMesSeleccionado((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
+  }
+  function mesSiguiente() {
+    setMesSeleccionado((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
+  }
+  function irAHoy() {
+    setMesSeleccionado(new Date());
+  }
+  const esMesActual = mismoMes(hoy.toISOString(), mesSeleccionado);
+
+  function numCSV(n) {
+    return Number(n).toFixed(2).replace(".", ",");
+  }
+
+  function exportarCSV() {
+    let csv = "Fecha;Concepto;Gasto;Ingreso;Saldo\n";
+    filas.forEach((m) => {
+      const fecha = new Date(m.fecha).toLocaleDateString("es-ES");
+      const concepto = String(m.concepto).replace(/"/g, '""');
+      csv += `${fecha};"${concepto}";${numCSV(m.gasto)};${numCSV(m.ingreso)};${numCSV(m.saldo)}\n`;
+    });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mis_cuentas_movimientos.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportarPDF() {
+    window.print();
+  }
 
   return (
     <div className="container">
@@ -383,50 +451,89 @@ export default function Home() {
         )}
       </div>
 
+      <div className="selector-mes">
+        <button type="button" className="mes-btn" onClick={mesAnterior}>‹</button>
+        <span className="mes-actual" style={{ textTransform: "capitalize" }}>{nombreMes}</span>
+        <button type="button" className="mes-btn" onClick={mesSiguiente}>›</button>
+        {!esMesActual && (
+          <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={irAHoy}>
+            volver a hoy
+          </button>
+        )}
+      </div>
+
       <div className={"card resumen-mes" + (enMeta ? " en-meta" : " fuera-meta")}>
         <div className="resumen-mes-header">
-          <strong style={{ textTransform: "capitalize" }}>{nombreMes}</strong>
+          <strong>Tu presupuesto de este mes</strong>
           <span className={"pill" + (enMeta ? " verde" : " rojo")}>
-            {enMeta ? "Vas bien de ahorro" : "Por debajo de tu meta"}
+            {enMeta ? "Vas dentro de presupuesto" : "Te has pasado"}
           </span>
         </div>
-        <div className="resumen-grid">
-          <div>
-            <div className="label">Ingresos</div>
-            <div className="cifra">{money(ingresosMes)}</div>
-          </div>
-          <div>
-            <div className="label">Gastos</div>
-            <div className="cifra">{money(gastosMes)}</div>
-          </div>
-          <div>
-            <div className="label">Ahorro real</div>
-            <div className="cifra">{money(ahorroRealMes)}</div>
-          </div>
+
+        <div className="presupuesto-linea">
+          <span>Ingresos previstos</span>
+          <span>{money(ingresosPrevistos)}</span>
         </div>
-        {!editandoMeta ? (
-          <div className="meta-linea">
-            Tu meta: entre {money(metaMin)} y {money(metaMax)}
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => {
-                setMetaMinInput(String(metaMin));
-                setMetaMaxInput(String(metaMax));
-                setEditandoMeta(true);
-              }}
-            >
-              editar
-            </button>
-          </div>
-        ) : (
-          <div className="editar-saldo">
+        <div className="presupuesto-linea resta">
+          <span>− Gastos fijos</span>
+          <span>{money(gastosFijosPrevistos)}</span>
+        </div>
+        <div className="presupuesto-linea resta">
+          <span>
+            − Tu meta de ahorro
+            {!editandoMeta && (
+              <button
+                type="button"
+                className="link-btn"
+                style={{ marginLeft: 6 }}
+                onClick={() => {
+                  setMetaMinInput(String(metaMin));
+                  setMetaMaxInput(String(metaMax));
+                  setEditandoMeta(true);
+                }}
+              >
+                editar
+              </button>
+            )}
+          </span>
+          <span>{money(metaMin)}</span>
+        </div>
+        {editandoMeta && (
+          <div className="editar-saldo" style={{ marginBottom: 10 }}>
             <input type="number" step="1" value={metaMinInput} onChange={(e) => setMetaMinInput(e.target.value)} />
             <span>—</span>
             <input type="number" step="1" value={metaMaxInput} onChange={(e) => setMetaMaxInput(e.target.value)} />
             <button type="button" onClick={guardarMeta}>Guardar</button>
           </div>
         )}
+        <div className="presupuesto-linea total">
+          <span>= Disponible para gastar</span>
+          <span>{money(disponibleParaGastar)}</span>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div className="var-item-top">
+            <span>Gastado hasta ahora</span>
+            <span className={restaDisponible < 0 ? "var-resta negativo" : "var-resta"}>
+              {restaDisponible < 0
+                ? `Te has pasado ${money(Math.abs(restaDisponible))}`
+                : `Te quedan ${money(restaDisponible)}`}
+            </span>
+          </div>
+          <div className="barra-fondo">
+            <div
+              className={"barra-relleno" + (restaDisponible < 0 ? " excedido" : "")}
+              style={{ width: `${porcentajeDisponible}%` }}
+            />
+          </div>
+          <div className="var-item-bottom">
+            {money(gastadoVariableReal)} de {money(disponibleParaGastar)}
+          </div>
+        </div>
+
+        <div className="ahorro-real-linea">
+          Ahorro real hasta ahora (ingresos − gastos que ya has metido): <strong>{money(ahorroRealMes)}</strong>
+        </div>
       </div>
 
       <div className="card">
@@ -479,7 +586,7 @@ export default function Home() {
         ))}
       </div>
 
-      <div className="card">
+      <div className="card no-imprimir">
         <strong>Añadir movimiento</strong>
         <form className="nuevo" onSubmit={guardarMovimiento}>
           <div className="tipo-toggle">
@@ -508,7 +615,12 @@ export default function Home() {
       </div>
 
       <div className="card">
-        <strong>Movimientos</strong>
+        <div className="resumen-mes-header">
+          <strong>Movimientos</strong>
+          <button type="button" className="link-btn" onClick={() => setMostrarTodosMovs((v) => !v)}>
+            {mostrarTodosMovs ? "ver solo este mes" : "ver todos"}
+          </button>
+        </div>
         <table>
           <thead>
             <tr>
@@ -521,7 +633,7 @@ export default function Home() {
             </tr>
           </thead>
           <tbody>
-            {filas.map((m) => (
+            {(mostrarTodosMovs ? filas : movDelMes).map((m) => (
               <tr key={m.id}>
                 <td>{new Date(m.fecha).toLocaleDateString("es-ES")}</td>
                 <td>{m.concepto}</td>
@@ -533,10 +645,12 @@ export default function Home() {
                 </td>
               </tr>
             ))}
-            {!loading && filas.length === 0 && (
+            {!loading && (mostrarTodosMovs ? filas : movDelMes).length === 0 && (
               <tr>
                 <td colSpan={6} style={{ color: "#888", padding: "16px 0" }}>
-                  Todavía no has añadido ningún movimiento.
+                  {mostrarTodosMovs
+                    ? "Todavía no has añadido ningún movimiento."
+                    : "No hay movimientos este mes."}
                 </td>
               </tr>
             )}
@@ -544,7 +658,7 @@ export default function Home() {
         </table>
       </div>
 
-      <div className="card">
+      <div className="card no-imprimir">
         <button type="button" className="link-btn" onClick={() => setMostrarGestionVar((v) => !v)}>
           {mostrarGestionVar ? "Ocultar gestión de gastos variables" : "Gestionar mis categorías de gastos variables"}
         </button>
@@ -577,7 +691,7 @@ export default function Home() {
         )}
       </div>
 
-      <div className="card">
+      <div className="card no-imprimir">
         <button type="button" className="link-btn" onClick={() => setMostrarGestionIng((v) => !v)}>
           {mostrarGestionIng ? "Ocultar gestión de ingresos fijos" : "Gestionar mis ingresos fijos (el Paro, etc.)"}
         </button>
@@ -619,7 +733,7 @@ export default function Home() {
         )}
       </div>
 
-      <div className="card">
+      <div className="card no-imprimir">
         <button type="button" className="link-btn" onClick={() => setMostrarGestion((v) => !v)}>
           {mostrarGestion ? "Ocultar gestión de gastos fijos" : "Gestionar mis gastos fijos (añadir, editar, borrar)"}
         </button>
@@ -659,6 +773,21 @@ export default function Home() {
             </form>
           </div>
         )}
+      </div>
+
+      <div className="card no-imprimir">
+        <strong>Exportar mis datos</strong>
+        <p className="subtitle" style={{ margin: "6px 0 12px" }}>
+          Descarga todos tus movimientos.
+        </p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" onClick={exportarCSV} style={{ flex: 1 }}>
+            📊 Descargar Excel
+          </button>
+          <button type="button" onClick={exportarPDF} style={{ flex: 1 }}>
+            🖨️ Exportar a PDF
+          </button>
+        </div>
       </div>
     </div>
   );
