@@ -1,0 +1,199 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  background: #f4f6fb;
+  color: #1a1a2e;
+}
+.container {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 80px;
+}
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 4px;
+}
+.subtitle {
+  color: #666;
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+}
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.saldo-actual {
+  text-align: center;
+  padding: 24px 16px;
+}
+.saldo-actual .label {
+  font-size: 0.85rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.saldo-actual .valor {
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: #2f5496;
+  margin-top: 4px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+th, td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid #eee;
+}
+th {
+  color: #666;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.gasto { color: #c0392b; }
+td.ingreso { color: #27ae60; }
+.saldo-col { font-weight: 600; }
+form.nuevo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+form.nuevo .full { grid-column: 1 / -1; }
+input, select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+label {
+  font-size: 0.8rem;
+  color: #555;
+  display: block;
+  margin-bottom: 4px;
+}
+button {
+  background: #2f5496;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 1rem;
+  cursor: pointer;
+  grid-column: 1 / -1;
+}
+button:hover { background: #24407a; }
+button.borrar {
+  background: transparent;
+  color: #c0392b;
+  padding: 2px 6px;
+  font-size: 0.85rem;
+}
+.tipo-toggle {
+  display: flex;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+.tipo-toggle button {
+  flex: 1;
+  background: #eee;
+  color: #333;
+}
+.tipo-toggle button.activo.gasto { background: #c0392b; color: white; }
+.tipo-toggle button.activo.ingreso { background: #27ae60; color: white; }
+.recordatorio-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 0.9rem;
+}
+.recordatorio-item.antes { color: #c0392b; }
+.dia { color: #888; font-size: 0.8rem; }
+.editar-saldo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+.editar-saldo input { width: 120px; }
+.editar-saldo button {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+.resumen-mes-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.pill {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.pill.verde { background: #d4edda; color: #1e7e34; }
+.pill.rojo { background: #fbe0dc; color: #b3311f; }
+.resumen-mes.en-meta { border-left: 4px solid #27ae60; }
+.resumen-mes.fuera-meta { border-left: 4px solid #c0392b; }
+.resumen-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.resumen-grid .label { font-size: 0.75rem; color: #666; }
+.resumen-grid .cifra { font-size: 1.15rem; font-weight: 700; }
+.meta-linea {
+  font-size: 0.85rem;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.link-btn {
+  background: transparent;
+  color: #2f5496;
+  padding: 4px 0;
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
+.gf-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 0.9rem;
+  color: #b3311f;
+}
+.gf-item.ok { color: #1e7e34; }
+.gf-right { display: flex; align-items: center; gap: 8px; }
+.mini-btn {
+  background: #2f5496;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+.gf-editable {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.gf-editable input { padding: 6px; font-size: 0.85rem; }
