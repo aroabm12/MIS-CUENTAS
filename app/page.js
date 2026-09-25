@@ -58,6 +58,7 @@ export default function Home() {
   const [tipo, setTipo] = useState("gasto");
   const [categoriaId, setCategoriaId] = useState("");
   const [movEditandoId, setMovEditandoId] = useState(null);
+  const [categoriaAbiertaId, setCategoriaAbiertaId] = useState(null);
 
   const [mostrarGestion, setMostrarGestion] = useState(false);
   const [nuevoGF, setNuevoGF] = useState({ concepto: "", importe: "", dia: "" });
@@ -183,17 +184,16 @@ export default function Home() {
 
   const variablesConGasto = presupuestoVariable.map((cat) => {
     const clave = palabraClave(cat.concepto);
-    const gastado = movDelMes
-      .filter(
-        (m) =>
-          Number(m.gasto) > 0 &&
-          (m.categoria_id ? m.categoria_id === cat.id : m.concepto.toLowerCase().includes(clave))
-      )
-      .reduce((s, m) => s + Number(m.gasto), 0);
+    const movsCategoria = movDelMes.filter(
+      (m) =>
+        Number(m.gasto) > 0 &&
+        (m.categoria_id ? m.categoria_id === cat.id : m.concepto.toLowerCase().includes(clave))
+    );
+    const gastado = movsCategoria.reduce((s, m) => s + Number(m.gasto), 0);
     const presupuestado = Number(cat.importe);
     const resta = presupuestado - gastado;
     const porcentaje = presupuestado > 0 ? Math.min(100, (gastado / presupuestado) * 100) : gastado > 0 ? 100 : 0;
-    return { ...cat, gastado, resta, porcentaje };
+    return { ...cat, gastado, resta, porcentaje, movimientos: movsCategoria };
   });
 
   async function guardarMovimiento(e) {
@@ -439,6 +439,10 @@ export default function Home() {
     window.print();
   }
 
+  const listaMovsMostrada = mostrarTodosMovs ? filas : movDelMes;
+  const totalGastoLista = listaMovsMostrada.reduce((s, m) => s + Number(m.gasto), 0);
+  const totalIngresoLista = listaMovsMostrada.reduce((s, m) => s + Number(m.ingreso), 0);
+
   return (
     <div className="container">
       <h1>Mis Cuentas</h1>
@@ -670,27 +674,50 @@ export default function Home() {
         <p className="subtitle" style={{ margin: "6px 0 12px" }}>
           Se rellena solo con lo que escribes abajo en "Añadir movimiento" si el concepto se parece al nombre de la categoría.
         </p>
-        {variablesConGasto.map((cat) => (
-          <div key={cat.id} className="var-item">
-            <div className="var-item-top">
-              <span>{cat.concepto}</span>
-              <span className={cat.resta < 0 ? "var-resta negativo" : "var-resta"}>
-                {cat.resta < 0
-                  ? `Te has pasado ${money(Math.abs(cat.resta))}`
-                  : `Te quedan ${money(cat.resta)}`}
-              </span>
+        {variablesConGasto.map((cat) => {
+          const abierta = categoriaAbiertaId === cat.id;
+          return (
+            <div key={cat.id} className="var-item">
+              <button
+                type="button"
+                className="var-item-clicable"
+                onClick={() => setCategoriaAbiertaId(abierta ? null : cat.id)}
+              >
+                <div className="var-item-top">
+                  <span>{abierta ? "▾" : "▸"} {cat.concepto}</span>
+                  <span className={cat.resta < 0 ? "var-resta negativo" : "var-resta"}>
+                    {cat.resta < 0
+                      ? `Te has pasado ${money(Math.abs(cat.resta))}`
+                      : `Te quedan ${money(cat.resta)}`}
+                  </span>
+                </div>
+                <div className="barra-fondo">
+                  <div
+                    className={"barra-relleno" + (cat.resta < 0 ? " excedido" : "")}
+                    style={{ width: `${cat.porcentaje}%` }}
+                  />
+                </div>
+                <div className="var-item-bottom">
+                  {money(cat.gastado)} de {money(cat.importe)}
+                </div>
+              </button>
+              {abierta && (
+                <div className="var-desplegable">
+                  {cat.movimientos.length === 0 ? (
+                    <div className="var-item-bottom">Todavía no has metido ningún gasto aquí este mes.</div>
+                  ) : (
+                    cat.movimientos.map((m) => (
+                      <div key={m.id} className="var-mov-item">
+                        <span>{new Date(m.fecha).toLocaleDateString("es-ES")} · {m.concepto}</span>
+                        <span>{money(m.gasto)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
-            <div className="barra-fondo">
-              <div
-                className={"barra-relleno" + (cat.resta < 0 ? " excedido" : "")}
-                style={{ width: `${cat.porcentaje}%` }}
-              />
-            </div>
-            <div className="var-item-bottom">
-              {money(cat.gastado)} de {money(cat.importe)}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="card no-imprimir">
@@ -751,7 +778,7 @@ export default function Home() {
             </tr>
           </thead>
           <tbody>
-            {(mostrarTodosMovs ? filas : movDelMes).map((m) =>
+            {listaMovsMostrada.map((m) =>
               movEditandoId === m.id ? (
                 <FilaMovimientoEditable
                   key={m.id}
@@ -776,7 +803,7 @@ export default function Home() {
                 </tr>
               )
             )}
-            {!loading && (mostrarTodosMovs ? filas : movDelMes).length === 0 && (
+            {!loading && listaMovsMostrada.length === 0 && (
               <tr>
                 <td colSpan={6} style={{ color: "#888", padding: "16px 0" }}>
                   {mostrarTodosMovs
@@ -786,6 +813,14 @@ export default function Home() {
               </tr>
             )}
           </tbody>
+          <tfoot>
+            <tr className="fila-totales">
+              <td colSpan={2}>Total</td>
+              <td className="num gasto">{money(totalGastoLista)}</td>
+              <td className="num ingreso">{money(totalIngresoLista)}</td>
+              <td colSpan={2}></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
