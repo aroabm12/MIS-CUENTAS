@@ -305,6 +305,18 @@ button.borrar {
   body { background: white; }
   .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
 }
+.fila-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+}
+.fila-edit input, .fila-edit select {
+  width: auto;
+  flex: 1;
+  min-width: 110px;
+}
 .error-msg {
   background: #fbe0dc;
   color: #b3311f;
