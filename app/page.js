@@ -497,7 +497,7 @@ export default function Home() {
   const ahorroMesAnterior = ingresosMesAnterior - gastosMesAnterior;
 
   // ---- Gráfico de tarta: en qué se ha ido el dinero este mes ----
-  const PALETA_TARTA = ["#75978f", "#a08384", "#a9aa85", "#c0392b", "#5c7d76", "#d9a25c", "#7c9caf", "#8e7cc3", "#b0aa8f"];
+  const PALETA_TARTA = ["#5c7d76", "#a08384", "#a9aa85", "#b0564c", "#8fb0a6", "#d0a266", "#7c9caf", "#9c8bb8", "#b0aa8f"];
   function claseDeGasto(m) {
     if (gastosFijos.some((gf) => m.concepto.toLowerCase().includes(gf.concepto.toLowerCase()))) {
       return "Gastos fijos";
@@ -564,7 +564,7 @@ export default function Home() {
                 setNuevoSaldoInicial(String(saldoInicial));
                 setEditandoSaldo(true);
               }}
-              style={{ background: "transparent", color: "#2f5496" }}
+              style={{ background: "transparent", color: "var(--color-primary)" }}
             >
               Corregir saldo de partida
             </button>
@@ -963,7 +963,7 @@ export default function Home() {
             )}
             {!loading && listaMovsMostrada.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ color: "#888", padding: "16px 0" }}>
+                <td colSpan={6} style={{ color: "var(--color-muted)", padding: "16px 0" }}>
                   {mostrarTodosMovs
                     ? "Todavía no has añadido ningún movimiento."
                     : "No hay movimientos este mes."}
