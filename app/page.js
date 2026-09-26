@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 function money(n) {
   return Number(n).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -415,24 +416,68 @@ export default function Home() {
   }
   const esMesActual = mismoMes(hoy.toISOString(), mesSeleccionado);
 
-  function numCSV(n) {
-    return Number(n).toFixed(2).replace(".", ",");
-  }
+  function exportarExcel() {
+    const wb = XLSX.utils.book_new();
 
-  function exportarCSV() {
-    let csv = "Fecha;Concepto;Gasto;Ingreso;Saldo\n";
-    filas.forEach((m) => {
-      const fecha = new Date(m.fecha).toLocaleDateString("es-ES");
-      const concepto = String(m.concepto).replace(/"/g, '""');
-      csv += `${fecha};"${concepto}";${numCSV(m.gasto)};${numCSV(m.ingreso)};${numCSV(m.saldo)}\n`;
-    });
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "mis_cuentas_movimientos.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    // ---- Resumen ----
+    const resumenAOA = [
+      [`Mis Cuentas — ${nombreMes}`],
+      [],
+      ["Ingresos previstos", ingresosPrevistos],
+      ["Gastos fijos previstos", gastosFijosPrevistos],
+      ["Meta de ahorro", metaMin],
+      ["Disponible para gastar", disponibleParaGastar],
+      [],
+      ["Ingresos reales este mes", ingresosMes],
+      ["Gastos reales este mes", gastosMes],
+      ["Ahorro real este mes", ahorroRealMes],
+      [],
+      [`Comparado con ${nombreMesAnterior}`],
+      ["Concepto", nombreMes, nombreMesAnterior, "Diferencia"],
+      ["Ingresos", ingresosMes, ingresosMesAnterior, ingresosMes - ingresosMesAnterior],
+      ["Gastos", gastosMes, gastosMesAnterior, gastosMes - gastosMesAnterior],
+      ["Ahorro real", ahorroRealMes, ahorroMesAnterior, ahorroRealMes - ahorroMesAnterior],
+      [],
+      ["Saldo total actual", saldoActual],
+    ];
+    const wsResumen = XLSX.utils.aoa_to_sheet(resumenAOA);
+    wsResumen["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
+
+    // ---- Movimientos ----
+    const movAOA = [
+      ["Fecha", "Concepto", "Gasto", "Ingreso", "Saldo"],
+      ...filas.map((m) => [
+        new Date(m.fecha).toLocaleDateString("es-ES"),
+        m.concepto,
+        Number(m.gasto) || "",
+        Number(m.ingreso) || "",
+        Number(m.saldo),
+      ]),
+    ];
+    const wsMov = XLSX.utils.aoa_to_sheet(movAOA);
+    wsMov["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsMov, "Movimientos");
+
+    // ---- Gastos Fijos ----
+    const gfAOA = [
+      ["Concepto", "Día", "Importe"],
+      ...gastosFijos.map((gf) => [gf.concepto, gf.dia, Number(gf.importe)]),
+    ];
+    const wsGF = XLSX.utils.aoa_to_sheet(gfAOA);
+    wsGF["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsGF, "Gastos Fijos");
+
+    // ---- Gastos Variables (del mes seleccionado) ----
+    const gvAOA = [
+      ["Categoría", "Presupuesto", "Gastado", "Resta"],
+      ...variablesConGasto.map((c) => [c.concepto, Number(c.importe), c.gastado, c.resta]),
+    ];
+    const wsGV = XLSX.utils.aoa_to_sheet(gvAOA);
+    wsGV["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsGV, "Gastos Variables");
+
+    XLSX.writeFile(wb, `mis_cuentas_${claveMes}.xlsx`);
   }
 
   function exportarPDF() {
@@ -442,6 +487,60 @@ export default function Home() {
   const listaMovsMostrada = mostrarTodosMovs ? filas : movDelMes;
   const totalGastoLista = listaMovsMostrada.reduce((s, m) => s + Number(m.gasto), 0);
   const totalIngresoLista = listaMovsMostrada.reduce((s, m) => s + Number(m.ingreso), 0);
+
+  // ---- Comparativa con el mes anterior (para el informe / PDF) ----
+  const mesAnteriorRef = new Date(mesSeleccionado.getFullYear(), mesSeleccionado.getMonth() - 1, 1);
+  const nombreMesAnterior = mesAnteriorRef.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const movMesAnterior = filas.filter((m) => mismoMes(m.fecha, mesAnteriorRef));
+  const ingresosMesAnterior = movMesAnterior.reduce((s, m) => s + Number(m.ingreso), 0);
+  const gastosMesAnterior = movMesAnterior.reduce((s, m) => s + Number(m.gasto), 0);
+  const ahorroMesAnterior = ingresosMesAnterior - gastosMesAnterior;
+
+  // ---- Gráfico de tarta: en qué se ha ido el dinero este mes ----
+  const PALETA_TARTA = ["#75978f", "#a08384", "#a9aa85", "#c0392b", "#5c7d76", "#d9a25c", "#7c9caf", "#8e7cc3", "#b0aa8f"];
+  function claseDeGasto(m) {
+    if (gastosFijos.some((gf) => m.concepto.toLowerCase().includes(gf.concepto.toLowerCase()))) {
+      return "Gastos fijos";
+    }
+    if (m.categoria_id) {
+      const cat = presupuestoVariable.find((c) => c.id === m.categoria_id);
+      if (cat) return cat.concepto;
+    }
+    const catTexto = presupuestoVariable.find((c) => m.concepto.toLowerCase().includes(palabraClave(c.concepto)));
+    return catTexto ? catTexto.concepto : "Otros";
+  }
+  const bucketsTarta = {};
+  movDelMes
+    .filter((m) => Number(m.gasto) > 0)
+    .forEach((m) => {
+      const clase = claseDeGasto(m);
+      bucketsTarta[clase] = (bucketsTarta[clase] || 0) + Number(m.gasto);
+    });
+  const sliceTarta = Object.entries(bucketsTarta)
+    .map(([label, value], i) => ({ label, value, color: PALETA_TARTA[i % PALETA_TARTA.length] }))
+    .sort((a, b) => b.value - a.value);
+  const totalTarta = sliceTarta.reduce((s, x) => s + x.value, 0);
+
+  function pathsTarta(slices, size) {
+    const total = slices.reduce((s, x) => s + x.value, 0);
+    if (total <= 0) return [];
+    const radio = size / 2;
+    let anguloActual = -90;
+    return slices.map((sl) => {
+      const angulo = (sl.value / total) * 360;
+      const x1 = radio + radio * Math.cos((anguloActual * Math.PI) / 180);
+      const y1 = radio + radio * Math.sin((anguloActual * Math.PI) / 180);
+      anguloActual += angulo;
+      const x2 = radio + radio * Math.cos((anguloActual * Math.PI) / 180);
+      const y2 = radio + radio * Math.sin((anguloActual * Math.PI) / 180);
+      const largeArc = angulo > 180 ? 1 : 0;
+      const d =
+        angulo >= 359.999
+          ? `M ${radio} 0 A ${radio} ${radio} 0 1 1 ${radio - 0.01} 0 Z`
+          : `M ${radio} ${radio} L ${x1} ${y1} A ${radio} ${radio} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      return { d, color: sl.color };
+    });
+  }
 
   return (
     <div className="container">
@@ -527,6 +626,65 @@ export default function Home() {
           <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={irAHoy}>
             volver a hoy
           </button>
+        )}
+      </div>
+
+      <div className="card solo-imprimir">
+        <strong style={{ textTransform: "capitalize" }}>Informe — {nombreMes}</strong>
+        <table style={{ marginTop: 10, marginBottom: 16 }}>
+          <thead>
+            <tr>
+              <th>Concepto</th>
+              <th className="num">{nombreMes}</th>
+              <th className="num" style={{ textTransform: "capitalize" }}>{nombreMesAnterior}</th>
+              <th className="num">Diferencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Ingresos</td>
+              <td className="num">{money(ingresosMes)}</td>
+              <td className="num">{money(ingresosMesAnterior)}</td>
+              <td className="num">{money(ingresosMes - ingresosMesAnterior)}</td>
+            </tr>
+            <tr>
+              <td>Gastos</td>
+              <td className="num">{money(gastosMes)}</td>
+              <td className="num">{money(gastosMesAnterior)}</td>
+              <td className="num">{money(gastosMes - gastosMesAnterior)}</td>
+            </tr>
+            <tr>
+              <td>Ahorro real</td>
+              <td className="num">{money(ahorroRealMes)}</td>
+              <td className="num">{money(ahorroMesAnterior)}</td>
+              <td className="num">{money(ahorroRealMes - ahorroMesAnterior)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <strong>En qué se ha ido el dinero este mes</strong>
+        {totalTarta === 0 ? (
+          <p className="subtitle">Todavía no hay gastos este mes.</p>
+        ) : (
+          <div className="tarta-wrap">
+            <svg viewBox="0 0 180 180" width="180" height="180">
+              {pathsTarta(sliceTarta, 180).map((p, i) => (
+                <path key={i} d={p.d} fill={p.color} />
+              ))}
+            </svg>
+            <div className="tarta-leyenda">
+              {sliceTarta.map((sl, i) => (
+                <div key={i} className="tarta-leyenda-item">
+                  <span className="tarta-punto" style={{ background: sl.color }} />
+                  <span style={{ flex: 1 }}>{sl.label}</span>
+                  <span>{money(sl.value)}</span>
+                  <span className="subtitle" style={{ minWidth: 40, textAlign: "right" }}>
+                    {((sl.value / totalTarta) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -944,10 +1102,10 @@ export default function Home() {
       <div className="card no-imprimir">
         <strong>Exportar mis datos</strong>
         <p className="subtitle" style={{ margin: "6px 0 12px" }}>
-          Descarga todos tus movimientos.
+          El Excel lleva varias pestañas (Resumen, Movimientos, Gastos Fijos, Gastos Variables). El PDF es un informe con la comparativa del mes anterior y el gráfico de gastos.
         </p>
         <div style={{ display: "flex", gap: 10 }}>
-          <button type="button" onClick={exportarCSV} style={{ flex: 1 }}>
+          <button type="button" onClick={exportarExcel} style={{ flex: 1 }}>
             📊 Descargar Excel
           </button>
           <button type="button" onClick={exportarPDF} style={{ flex: 1 }}>
