@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import { descargarExcel, palabraClave } from "../lib/exportarExcel";
 
 function money(n) {
   return Number(n).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -26,13 +26,6 @@ function diaEsHoy(diaStr, diaHoy) {
     return diaHoy >= Number(a) && diaHoy <= Number(b);
   }
   return false;
-}
-
-// Para emparejar un movimiento con una categoría variable usamos la
-// primera palabra del nombre de la categoría (p.ej. "Comida / supermercado"
-// -> "comida"), porque el concepto que escribes suele ser más corto.
-function palabraClave(concepto) {
-  return concepto.split("/")[0].split(" y ")[0].trim().toLowerCase();
 }
 
 export default function Home() {
@@ -418,67 +411,10 @@ export default function Home() {
   const esMesActual = mismoMes(hoy.toISOString(), mesSeleccionado);
 
   function exportarExcel() {
-    const wb = XLSX.utils.book_new();
-
-    // ---- Resumen ----
-    const resumenAOA = [
-      [`Mis Cuentas — ${nombreMes}`],
-      [],
-      ["Ingresos previstos", ingresosPrevistos],
-      ["Gastos fijos previstos", gastosFijosPrevistos],
-      ["Meta de ahorro", metaMin],
-      ["Disponible para gastar", disponibleParaGastar],
-      [],
-      ["Ingresos reales este mes", ingresosMes],
-      ["Gastos reales este mes", gastosMes],
-      ["Ahorro real este mes", ahorroRealMes],
-      [],
-      [`Comparado con ${nombreMesAnterior}`],
-      ["Concepto", nombreMes, nombreMesAnterior, "Diferencia"],
-      ["Ingresos", ingresosMes, ingresosMesAnterior, ingresosMes - ingresosMesAnterior],
-      ["Gastos", gastosMes, gastosMesAnterior, gastosMes - gastosMesAnterior],
-      ["Ahorro real", ahorroRealMes, ahorroMesAnterior, ahorroRealMes - ahorroMesAnterior],
-      [],
-      ["Saldo total actual", saldoActual],
-    ];
-    const wsResumen = XLSX.utils.aoa_to_sheet(resumenAOA);
-    wsResumen["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
-
-    // ---- Movimientos ----
-    const movAOA = [
-      ["Fecha", "Concepto", "Gasto", "Ingreso", "Saldo"],
-      ...filas.map((m) => [
-        new Date(m.fecha).toLocaleDateString("es-ES"),
-        m.concepto,
-        Number(m.gasto) || "",
-        Number(m.ingreso) || "",
-        Number(m.saldo),
-      ]),
-    ];
-    const wsMov = XLSX.utils.aoa_to_sheet(movAOA);
-    wsMov["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsMov, "Movimientos");
-
-    // ---- Gastos Fijos ----
-    const gfAOA = [
-      ["Concepto", "Día", "Importe"],
-      ...gastosFijos.map((gf) => [gf.concepto, gf.dia, Number(gf.importe)]),
-    ];
-    const wsGF = XLSX.utils.aoa_to_sheet(gfAOA);
-    wsGF["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsGF, "Gastos Fijos");
-
-    // ---- Gastos Variables (del mes seleccionado) ----
-    const gvAOA = [
-      ["Categoría", "Presupuesto", "Gastado", "Resta"],
-      ...variablesConGasto.map((c) => [c.concepto, Number(c.importe), c.gastado, c.resta]),
-    ];
-    const wsGV = XLSX.utils.aoa_to_sheet(gvAOA);
-    wsGV["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsGV, "Gastos Variables");
-
-    XLSX.writeFile(wb, `mis_cuentas_${claveMes}.xlsx`);
+    descargarExcel(
+      { nombreMes, movDelMes, filas, gastosFijos, categorias: presupuestoVariable },
+      `mis_cuentas_${claveMes}.xlsx`
+    );
   }
 
   function exportarPDF() {
@@ -546,7 +482,6 @@ export default function Home() {
   return (
     <div className="container">
       <h1>Mis Cuentas</h1>
-      <p className="subtitle">Tarjeta y ahorro, todo junto en un solo número.</p>
 
       {error && (
         <div className="card error-msg" style={{ marginBottom: 20 }}>
@@ -1114,7 +1049,7 @@ export default function Home() {
       <div className="card no-imprimir">
         <strong>Exportar mis datos</strong>
         <p className="subtitle" style={{ margin: "6px 0 12px" }}>
-          El Excel lleva varias pestañas (Resumen, Movimientos, Gastos Fijos, Gastos Variables). El PDF es un informe con la comparativa del mes anterior y el gráfico de gastos.
+          El Excel lleva el resumen del mes (ingresos, gastos fijos y gastos variables por categoría) y la lista de movimientos. El PDF es un informe con la comparativa del mes anterior y el gráfico de gastos.
         </p>
         <div style={{ display: "flex", gap: 10 }}>
           <button type="button" onClick={exportarExcel} style={{ flex: 1 }}>
