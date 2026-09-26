@@ -1,6 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { descargarExcel, palabraClave } from "../lib/exportarExcel";
+import { descargarExcel } from "../lib/exportarExcel";
+import {
+  clasificarGasto,
+  claveDeMes,
+  gastoFijoTocaEnMes,
+  indiceCategoriaPorTexto,
+  indiceGastoFijo,
+} from "../lib/clasificacion";
 
 function money(n) {
   return Number(n).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -26,6 +33,50 @@ function diaEsHoy(diaStr, diaHoy) {
     return diaHoy >= Number(a) && diaHoy <= Number(b);
   }
   return false;
+}
+
+// La categoría de un gasto se elige en un desplegable con dos grupos:
+// tus gastos fijos ("gf-<id>") y tus categorías variables ("cat-<id>").
+function sugerirCategoria(concepto, gastosFijos, categorias) {
+  const iFijo = indiceGastoFijo(concepto, gastosFijos);
+  if (iFijo !== -1) return "gf-" + gastosFijos[iFijo].id;
+  const iCat = indiceCategoriaPorTexto(concepto, categorias);
+  return iCat !== -1 ? "cat-" + categorias[iCat].id : "";
+}
+
+// Convierte lo elegido en el desplegable en lo que se guarda. Si eliges
+// un gasto fijo, el concepto tiene que llevar su nombre para contar
+// como ese fijo, así que se le añade si no lo lleva.
+function resolverCategoria(valor, concepto, gastosFijos) {
+  if (valor.startsWith("cat-")) return { categoriaId: Number(valor.slice(4)), concepto };
+  if (valor.startsWith("gf-")) {
+    const gf = gastosFijos.find((g) => String(g.id) === valor.slice(3));
+    if (gf && !concepto.toLowerCase().includes(gf.concepto.toLowerCase())) {
+      concepto = concepto.trim() ? `${gf.concepto} · ${concepto.trim()}` : gf.concepto;
+    }
+    return { categoriaId: null, concepto };
+  }
+  return null;
+}
+
+function SelectorCategoria({ value, onChange, gastosFijos, categorias }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} required>
+      <option value="" disabled>
+        Elige una categoría…
+      </option>
+      <optgroup label="Gastos variables">
+        {categorias.map((cat) => (
+          <option key={cat.id} value={"cat-" + cat.id}>{cat.concepto}</option>
+        ))}
+      </optgroup>
+      <optgroup label="Gastos fijos">
+        {gastosFijos.map((gf) => (
+          <option key={gf.id} value={"gf-" + gf.id}>{gf.concepto}</option>
+        ))}
+      </optgroup>
+    </select>
+  );
 }
 
 export default function Home() {
@@ -73,12 +124,13 @@ export default function Home() {
   const [concepto, setConcepto] = useState("");
   const [importe, setImporte] = useState("");
   const [tipo, setTipo] = useState("gasto");
-  const [categoriaId, setCategoriaId] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [categoriaTocada, setCategoriaTocada] = useState(false);
   const [movEditandoId, setMovEditandoId] = useState(null);
   const [categoriaAbiertaId, setCategoriaAbiertaId] = useState(null);
 
   const [mostrarGestion, setMostrarGestion] = useState(false);
-  const [nuevoGF, setNuevoGF] = useState({ concepto: "", importe: "", dia: "" });
+  const [nuevoGF, setNuevoGF] = useState({ concepto: "", importe: "", dia: "", meses_alternos_desde: null });
   const [mostrarGestionIng, setMostrarGestionIng] = useState(false);
   const [nuevoIF, setNuevoIF] = useState({ concepto: "", importe: "", dia: "" });
   const [mostrarGestionVar, setMostrarGestionVar] = useState(false);
@@ -147,25 +199,22 @@ export default function Home() {
   // te queda libre para gastar ese mes. "Ingresos previstos" se puede
   // corregir mes a mes (p.ej. un mes de transición sin cobro) sin que
   // afecte a los demás meses, que siguen usando el valor normal.
-  const claveMes = `${mesSeleccionado.getFullYear()}-${String(mesSeleccionado.getMonth() + 1).padStart(2, "0")}`;
+  const claveMes = claveDeMes(mesSeleccionado);
   const ingresosPrevistosDefault = ingresosFijos.reduce((s, iff) => s + Number(iff.importe), 0);
   const overrideMes = overridesMensuales.find((o) => o.anio_mes === claveMes);
   const ingresosPrevistos =
     overrideMes && overrideMes.ingresos_previstos !== null
       ? Number(overrideMes.ingresos_previstos)
       : ingresosPrevistosDefault;
-  const gastosFijosPrevistos = gastosFijos.reduce((s, gf) => s + Number(gf.importe), 0);
+  const gastosFijosDelMes = gastosFijos.filter((gf) => gastoFijoTocaEnMes(gf, mesSeleccionado));
+  const gastosFijosPrevistos = gastosFijosDelMes.reduce((s, gf) => s + Number(gf.importe), 0);
   const disponibleParaGastar = ingresosPrevistos - gastosFijosPrevistos - metaMin;
 
   // De lo que ya has gastado este mes, la parte que NO es un gasto fijo
   // (comida, ocio, lo que sea) es lo que consume ese "disponible".
-  const gastadoVariableReal = movDelMes
-    .filter(
-      (m) =>
-        Number(m.gasto) > 0 &&
-        !gastosFijos.some((gf) => m.concepto.toLowerCase().includes(gf.concepto.toLowerCase()))
-    )
-    .reduce((s, m) => s + Number(m.gasto), 0);
+  const esGastoVariable = (m) =>
+    Number(m.gasto) > 0 && !clasificarGasto(m, gastosFijos, presupuestoVariable).fijo;
+  const gastadoVariableReal = movDelMes.filter(esGastoVariable).reduce((s, m) => s + Number(m.gasto), 0);
   const restaDisponible = disponibleParaGastar - gastadoVariableReal;
   const porcentajeDisponible =
     disponibleParaGastar > 0
@@ -175,22 +224,22 @@ export default function Home() {
       : 0;
   const enMeta = restaDisponible >= 0;
 
-  const gastosFijosConEstado = gastosFijos.map((gf) => {
-    const registrado = movDelMes.some(
-      (m) =>
-        Number(m.gasto) > 0 &&
-        m.concepto.toLowerCase().includes(gf.concepto.toLowerCase())
-    );
-    return { ...gf, registrado };
-  });
+  // Un gasto fijo está pagado si hay un gasto del mes que cuenta como ese fijo.
+  function fijoPagadoEn(gf, movs) {
+    return movs.some((m) => {
+      if (!(Number(m.gasto) > 0)) return false;
+      const c = clasificarGasto(m, gastosFijos, presupuestoVariable);
+      return c.fijo && gastosFijos[c.indice].id === gf.id;
+    });
+  }
+  const gastosFijosConEstado = gastosFijos
+    .map((gf) => ({ ...gf, registrado: fijoPagadoEn(gf, movDelMes) }))
+    .filter((gf) => gf.registrado || gastoFijoTocaEnMes(gf, mesSeleccionado));
 
   const diaHoy = hoy.getDate();
-  const gastosFijosHoyEstado = gastosFijos.map((gf) => ({
-    ...gf,
-    registrado: movDelMesReal.some(
-      (m) => Number(m.gasto) > 0 && m.concepto.toLowerCase().includes(gf.concepto.toLowerCase())
-    ),
-  }));
+  const gastosFijosHoyEstado = gastosFijos
+    .filter((gf) => gastoFijoTocaEnMes(gf, hoy))
+    .map((gf) => ({ ...gf, registrado: fijoPagadoEn(gf, movDelMesReal) }));
   const gastosHoy = gastosFijosHoyEstado.filter((gf) => diaEsHoy(gf.dia, diaHoy) && !gf.registrado);
   const ingresosHoy = ingresosFijos.filter((iff) => {
     const yaRegistrado = movDelMesReal.some(
@@ -199,35 +248,73 @@ export default function Home() {
     return diaEsHoy(iff.dia, diaHoy) && !yaRegistrado;
   });
 
-  const variablesConGasto = presupuestoVariable.map((cat) => {
-    const clave = palabraClave(cat.concepto);
-    const movsCategoria = movDelMes.filter(
-      (m) =>
-        Number(m.gasto) > 0 &&
-        (m.categoria_id ? m.categoria_id === cat.id : m.concepto.toLowerCase().includes(clave))
+  // Índice de la categoría variable de un gasto (-1 = sin categoría), o
+  // null si no es un gasto variable.
+  function categoriaDeGasto(m) {
+    if (!esGastoVariable(m)) return null;
+    return clasificarGasto(m, gastosFijos, presupuestoVariable).indice;
+  }
+
+  // Meses anteriores al elegido (hasta 3) que ya tienen movimientos, para
+  // comparar lo que gastas en cada categoría con tu media.
+  const primerMesConDatos = filas.length ? new Date(filas[0].fecha) : null;
+  const mesesParaMedia = [1, 2, 3]
+    .map((n) => new Date(mesSeleccionado.getFullYear(), mesSeleccionado.getMonth() - n, 1))
+    .filter(
+      (d) =>
+        primerMesConDatos &&
+        d.getFullYear() * 12 + d.getMonth() >= primerMesConDatos.getFullYear() * 12 + primerMesConDatos.getMonth()
     );
+  const movsParaMedia = filas.filter((m) => mesesParaMedia.some((d) => mismoMes(m.fecha, d)));
+  function mediaCategoria(indice) {
+    if (!mesesParaMedia.length) return null;
+    const total = movsParaMedia
+      .filter((m) => categoriaDeGasto(m) === indice)
+      .reduce((s, m) => s + Number(m.gasto), 0);
+    return total / mesesParaMedia.length;
+  }
+
+  const variablesConGasto = [
+    ...presupuestoVariable.map((cat, i) => ({ ...cat, indice: i })),
+    { id: "sin-categoria", concepto: "Sin categoría", importe: 0, indice: -1 },
+  ].map((cat) => {
+    const movsCategoria = movDelMes.filter((m) => categoriaDeGasto(m) === cat.indice);
     const gastado = movsCategoria.reduce((s, m) => s + Number(m.gasto), 0);
     const presupuestado = Number(cat.importe);
     const tieneMaximo = presupuestado > 0;
     const resta = tieneMaximo ? presupuestado - gastado : 0;
     const porcentaje = tieneMaximo ? Math.min(100, (gastado / presupuestado) * 100) : 0;
-    return { ...cat, gastado, tieneMaximo, resta, porcentaje, movimientos: movsCategoria };
-  });
+    return { ...cat, gastado, tieneMaximo, resta, porcentaje, media: mediaCategoria(cat.indice), movimientos: movsCategoria };
+  })
+    // "Sin categoría" solo aparece si tiene algo, y se ordena de más a menos gastado.
+    .filter((cat) => cat.indice !== -1 || cat.gastado > 0)
+    .sort((a, b) => b.gastado - a.gastado);
+
+  function cambiarConcepto(valor) {
+    setConcepto(valor);
+    // Mientras no elijas tú la categoría, te proponemos una según el texto.
+    if (!categoriaTocada) setCategoria(sugerirCategoria(valor, gastosFijos, presupuestoVariable));
+  }
 
   async function guardarMovimiento(e) {
     e.preventDefault();
     if (!concepto || !importe) return;
     setError("");
+    const elegida = tipo === "gasto" ? resolverCategoria(categoria, concepto, gastosFijos) : null;
+    if (tipo === "gasto" && !elegida) {
+      setError("Elige una categoría para el gasto.");
+      return;
+    }
     try {
       const res = await fetch("/api/movimientos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fecha,
-          concepto,
+          concepto: elegida ? elegida.concepto : concepto,
           gasto: tipo === "gasto" ? importe : 0,
           ingreso: tipo === "ingreso" ? importe : 0,
-          categoriaId: tipo === "gasto" && categoriaId ? Number(categoriaId) : null,
+          categoriaId: elegida ? elegida.categoriaId : null,
         }),
       });
       if (!res.ok) {
@@ -236,7 +323,8 @@ export default function Home() {
       }
       setConcepto("");
       setImporte("");
-      setCategoriaId("");
+      setCategoria("");
+      setCategoriaTocada(false);
       cargarTodo();
     } catch (err) {
       console.error(err);
@@ -256,7 +344,7 @@ export default function Home() {
           concepto: m.concepto,
           gasto: m.tipo === "gasto" ? m.importe : 0,
           ingreso: m.tipo === "ingreso" ? m.importe : 0,
-          categoriaId: m.tipo === "gasto" && m.categoriaId ? Number(m.categoriaId) : null,
+          categoriaId: m.tipo === "gasto" ? m.categoriaId : null,
         }),
       });
       if (!res.ok) {
@@ -364,7 +452,7 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(nuevoGF),
     });
-    setNuevoGF({ concepto: "", importe: "", dia: "" });
+    setNuevoGF({ concepto: "", importe: "", dia: "", meses_alternos_desde: null });
     cargarTodo();
   }
 
@@ -431,11 +519,11 @@ export default function Home() {
   function irAHoy() {
     setMesSeleccionado(new Date());
   }
-  const esMesActual = mismoMes(hoy.toISOString(), mesSeleccionado);
+  const esMesActual = mismoMes(hoy, mesSeleccionado);
 
   function exportarExcel() {
     descargarExcel(
-      { nombreMes, movDelMes, filas, gastosFijos, categorias: presupuestoVariable },
+      { nombreMes, fechaMes: mesSeleccionado, movDelMes, filas, gastosFijos, categorias: presupuestoVariable },
       `mis_cuentas_${claveMes}.xlsx`
     );
   }
@@ -456,18 +544,43 @@ export default function Home() {
   const gastosMesAnterior = movMesAnterior.reduce((s, m) => s + Number(m.gasto), 0);
   const ahorroMesAnterior = ingresosMesAnterior - gastosMesAnterior;
 
+  // ---- Proyección: al ritmo que vas, cuánto gastarás este mes ----
+  const diasDelMes = new Date(mesSeleccionado.getFullYear(), mesSeleccionado.getMonth() + 1, 0).getDate();
+  const proyeccionVariable =
+    esMesActual && diaHoy >= 3 && diaHoy < diasDelMes ? (gastadoVariableReal / diaHoy) * diasDelMes : null;
+
+  // ---- Ahorro mes a mes (hasta 6 meses, terminando en el elegido) ----
+  const indiceMes = (d) => d.getFullYear() * 12 + d.getMonth();
+  function ahorroDelMes(d) {
+    const movs = filas.filter((m) => mismoMes(m.fecha, d));
+    return movs.reduce((s, m) => s + Number(m.ingreso) - Number(m.gasto), 0);
+  }
+  const mesesEvolucion = primerMesConDatos
+    ? [5, 4, 3, 2, 1, 0]
+        .map((n) => new Date(mesSeleccionado.getFullYear(), mesSeleccionado.getMonth() - n, 1))
+        .filter((d) => indiceMes(d) >= indiceMes(primerMesConDatos))
+        .map((d) => ({
+          fecha: d,
+          nombre: d.toLocaleDateString("es-ES", { month: "short" }).replace(".", ""),
+          ahorro: ahorroDelMes(d),
+        }))
+    : [];
+  const maxEscalaAhorro = Math.max(metaMin, ...mesesEvolucion.map((m) => Math.abs(m.ahorro)), 1);
+  // Acumulado del año del mes elegido, desde enero (o desde el primer mes con datos).
+  const mesesDelAnio = primerMesConDatos
+    ? Array.from({ length: mesSeleccionado.getMonth() + 1 }, (_, i) => new Date(mesSeleccionado.getFullYear(), i, 1)).filter(
+        (d) => indiceMes(d) >= indiceMes(primerMesConDatos)
+      )
+    : [];
+  const ahorroAnio = mesesDelAnio.reduce((s, d) => s + ahorroDelMes(d), 0);
+  const metaAnio = metaMin * mesesDelAnio.length;
+
   // ---- Gráfico de tarta: en qué se ha ido el dinero este mes ----
   const PALETA_TARTA = ["#5c7d76", "#a08384", "#a9aa85", "#b0564c", "#8fb0a6", "#d0a266", "#7c9caf", "#9c8bb8", "#b0aa8f"];
   function claseDeGasto(m) {
-    if (gastosFijos.some((gf) => m.concepto.toLowerCase().includes(gf.concepto.toLowerCase()))) {
-      return "Gastos fijos";
-    }
-    if (m.categoria_id) {
-      const cat = presupuestoVariable.find((c) => c.id === m.categoria_id);
-      if (cat) return cat.concepto;
-    }
-    const catTexto = presupuestoVariable.find((c) => m.concepto.toLowerCase().includes(palabraClave(c.concepto)));
-    return catTexto ? catTexto.concepto : "Otros";
+    const indice = categoriaDeGasto(m);
+    if (indice === null) return "Gastos fijos";
+    return indice !== -1 ? presupuestoVariable[indice].concepto : "Sin categoría";
   }
   const bucketsTarta = {};
   movDelMes
@@ -757,12 +870,65 @@ export default function Home() {
           <div className="var-item-bottom">
             {money(gastadoVariableReal)} de {money(disponibleParaGastar)}
           </div>
+          {proyeccionVariable !== null && (
+            <div className={"proyeccion" + (proyeccionVariable > disponibleParaGastar ? " mal" : "")}>
+              Al ritmo que vas, acabarás el mes habiendo gastado unos <strong>{money(proyeccionVariable)}</strong>
+              {proyeccionVariable > disponibleParaGastar
+                ? ` — te pasarías ${money(proyeccionVariable - disponibleParaGastar)}.`
+                : ` — te sobrarían ${money(disponibleParaGastar - proyeccionVariable)}.`}
+            </div>
+          )}
         </div>
 
         <div className="ahorro-real-linea">
           Ahorro real hasta ahora (ingresos − gastos que ya has metido): <strong>{money(ahorroRealMes)}</strong>
         </div>
       </div>
+
+      {mesesEvolucion.length > 0 && (
+        <div className="card">
+          <strong>Tu ahorro mes a mes</strong>
+          <p className="subtitle" style={{ margin: "6px 0 12px" }}>
+            Ingresos menos gastos de cada mes. La raya marca tu meta ({money(metaMin)}).
+          </p>
+          <div className="evolucion">
+            {mesesEvolucion.map((mes) => {
+              const ancho = (Math.abs(mes.ahorro) / maxEscalaAhorro) * 100;
+              const cumple = mes.ahorro >= metaMin;
+              return (
+                <div
+                  key={mes.nombre + mes.fecha.getFullYear()}
+                  className={"evo-fila" + (indiceMes(mes.fecha) === indiceMes(mesSeleccionado) ? " actual" : "")}
+                  title={`${mes.fecha.toLocaleDateString("es-ES", { month: "long", year: "numeric" })}: ${money(mes.ahorro)}`}
+                >
+                  <span className="evo-mes">{mes.nombre}</span>
+                  <div className="evo-pista">
+                    <div
+                      className={"evo-barra" + (mes.ahorro < 0 ? " negativa" : cumple ? " cumple" : "")}
+                      style={{ width: `${ancho}%` }}
+                    />
+                    <div className="evo-meta" style={{ left: `${(metaMin / maxEscalaAhorro) * 100}%` }} />
+                  </div>
+                  <span className="evo-valor">
+                    {money(mes.ahorro)} {cumple ? "✓" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="ahorro-real-linea">
+            Llevas ahorrado en {mesSeleccionado.getFullYear()}: <strong>{money(ahorroAnio)}</strong>
+            {metaAnio > 0 && (
+              <>
+                {" "}de {money(metaAnio)} que te habías propuesto
+                {ahorroAnio >= metaAnio
+                  ? ` (vas ${money(ahorroAnio - metaAnio)} por encima).`
+                  : ` (te faltan ${money(metaAnio - ahorroAnio)}).`}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <strong>Gastos fijos de este mes</strong>
@@ -772,7 +938,11 @@ export default function Home() {
         {gastosFijosConEstado.map((gf) => (
           <div key={gf.id} className={"gf-item" + (gf.registrado ? " ok" : "")}>
             <span>
-              {gf.registrado ? "✓" : "○"} {gf.concepto} <span className="dia">· día {gf.dia}</span>
+              {gf.registrado ? "✓" : "○"} {gf.concepto}{" "}
+              <span className="dia">
+                {gf.dia && `· día ${gf.dia}`}
+                {gf.meses_alternos_desde && " · mes sí, mes no"}
+              </span>
             </span>
             <span className="gf-right">
               {money(gf.importe)}
@@ -789,7 +959,7 @@ export default function Home() {
       <div className="card">
         <strong>Gastos variables de este mes</strong>
         <p className="subtitle" style={{ margin: "6px 0 12px" }}>
-          Se rellena solo con lo que escribes abajo en "Añadir movimiento" si el concepto se parece al nombre de la categoría.
+          Ordenado de más a menos gastado. Toca una categoría para ver sus gastos.
         </p>
         {variablesConGasto.map((cat) => {
           const abierta = categoriaAbiertaId === cat.id;
@@ -821,9 +991,18 @@ export default function Home() {
                   </div>
                 )}
                 <div className="var-item-bottom">
-                  {cat.tieneMaximo
+                  {cat.indice === -1
+                    ? "Tócalo para verlos y ponles categoría con el lápiz ✎ en Movimientos"
+                    : cat.tieneMaximo
                     ? `${money(cat.gastado)} de ${money(cat.importe)}`
                     : "Sin máximo"}
+                  {cat.indice !== -1 && cat.media > 0 && (
+                    <span className={"comparativa" + (cat.gastado > cat.media ? " sube" : " baja")}>
+                      {" · "}tu media: {money(cat.media)} (
+                      {cat.gastado > cat.media ? "+" : "−"}
+                      {money(Math.abs(cat.gastado - cat.media))})
+                    </span>
+                  )}
                 </div>
               </button>
               {abierta && (
@@ -866,17 +1045,20 @@ export default function Home() {
           </div>
           <div className="full">
             <label>Concepto</label>
-            <input type="text" placeholder="p.ej. comida, coche, paro..." value={concepto} onChange={(e) => setConcepto(e.target.value)} />
+            <input type="text" placeholder="p.ej. cena, gasolina, paro..." value={concepto} onChange={(e) => cambiarConcepto(e.target.value)} />
           </div>
           {tipo === "gasto" && (
             <div className="full">
-              <label>Categoría (opcional)</label>
-              <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
-                <option value="">Sin categoría / gasto fijo</option>
-                {presupuestoVariable.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.concepto}</option>
-                ))}
-              </select>
+              <label>Categoría</label>
+              <SelectorCategoria
+                value={categoria}
+                onChange={(v) => {
+                  setCategoria(v);
+                  setCategoriaTocada(true);
+                }}
+                gastosFijos={gastosFijos}
+                categorias={presupuestoVariable}
+              />
             </div>
           )}
           <button type="submit">Añadir</button>
@@ -909,6 +1091,7 @@ export default function Home() {
                 <FilaMovimientoEditable
                   key={m.id}
                   m={m}
+                  gastosFijos={gastosFijos}
                   categorias={presupuestoVariable}
                   onGuardar={actualizarMovimiento}
                   onCancelar={() => setMovEditandoId(null)}
@@ -1034,7 +1217,7 @@ export default function Home() {
         {mostrarGestion && (
           <div style={{ marginTop: 12 }}>
             {gastosFijos.map((gf) => (
-              <GastoFijoEditable key={gf.id} gf={gf} onGuardar={actualizarGF} onBorrar={borrarGF} />
+              <GastoFijoEditable key={gf.id} gf={gf} conMesAlterno onGuardar={actualizarGF} onBorrar={borrarGF} />
             ))}
             <form className="nuevo" onSubmit={anadirGF} style={{ marginTop: 16 }}>
               <div>
@@ -1063,6 +1246,12 @@ export default function Home() {
                   onChange={(e) => setNuevoGF({ ...nuevoGF, dia: e.target.value })}
                 />
               </div>
+              <div className="full">
+                <OpcionMesAlterno
+                  valor={nuevoGF.meses_alternos_desde}
+                  onChange={(v) => setNuevoGF({ ...nuevoGF, meses_alternos_desde: v })}
+                />
+              </div>
               <button type="submit">Añadir gasto fijo</button>
             </form>
           </div>
@@ -1087,10 +1276,35 @@ export default function Home() {
   );
 }
 
-function GastoFijoEditable({ gf, onGuardar, onBorrar }) {
+// "Mes sí, mes no": guarda el primer mes en que toca ("2026-09"), o null.
+function OpcionMesAlterno({ valor, onChange }) {
+  return (
+    <div className="mes-alterno">
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!valor}
+          onChange={(e) => onChange(e.target.checked ? claveDeMes(new Date()) : null)}
+        />
+        Mes sí, mes no
+      </label>
+      {valor && (
+        <label className="check">
+          empezando en
+          <input type="month" value={valor} onChange={(e) => onChange(e.target.value || null)} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function GastoFijoEditable({ gf, conMesAlterno, onGuardar, onBorrar }) {
   const [local, setLocal] = useState(gf);
   const cambiado =
-    local.concepto !== gf.concepto || Number(local.importe) !== Number(gf.importe) || local.dia !== gf.dia;
+    local.concepto !== gf.concepto ||
+    Number(local.importe) !== Number(gf.importe) ||
+    local.dia !== gf.dia ||
+    (local.meses_alternos_desde || null) !== (gf.meses_alternos_desde || null);
   return (
     <div className="gf-editable">
       <input
@@ -1115,6 +1329,14 @@ function GastoFijoEditable({ gf, onGuardar, onBorrar }) {
         </button>
       )}
       <button type="button" className="borrar" onClick={() => onBorrar(gf.id)}>✕</button>
+      {conMesAlterno && (
+        <div className="gf-alterno">
+          <OpcionMesAlterno
+            valor={local.meses_alternos_desde}
+            onChange={(v) => setLocal({ ...local, meses_alternos_desde: v })}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1146,14 +1368,31 @@ function CategoriaEditable({ cat, onGuardar, onBorrar }) {
   );
 }
 
-function FilaMovimientoEditable({ m, categorias, onGuardar, onCancelar }) {
+function FilaMovimientoEditable({ m, gastosFijos, categorias, onGuardar, onCancelar }) {
+  const categoriaInicial = categorias.some((c) => c.id === m.categoria_id)
+    ? "cat-" + m.categoria_id
+    : sugerirCategoria(m.concepto, gastosFijos, categorias);
   const [local, setLocal] = useState({
     fecha: m.fecha ? new Date(m.fecha).toISOString().slice(0, 10) : "",
     concepto: m.concepto,
     tipo: Number(m.gasto) > 0 ? "gasto" : "ingreso",
     importe: Number(m.gasto) > 0 ? m.gasto : m.ingreso,
-    categoriaId: m.categoria_id || "",
+    categoria: categoriaInicial,
   });
+  const [aviso, setAviso] = useState("");
+  function guardar() {
+    const elegida = local.tipo === "gasto" ? resolverCategoria(local.categoria, local.concepto, gastosFijos) : null;
+    if (local.tipo === "gasto" && !elegida) {
+      setAviso("Elige una categoría para el gasto.");
+      return;
+    }
+    onGuardar({
+      ...local,
+      id: m.id,
+      concepto: elegida ? elegida.concepto : local.concepto,
+      categoriaId: elegida ? elegida.categoriaId : null,
+    });
+  }
   return (
     <tr>
       <td colSpan={6}>
@@ -1191,18 +1430,16 @@ function FilaMovimientoEditable({ m, categorias, onGuardar, onCancelar }) {
             onChange={(e) => setLocal({ ...local, concepto: e.target.value })}
           />
           {local.tipo === "gasto" && (
-            <select
-              value={local.categoriaId}
-              onChange={(e) => setLocal({ ...local, categoriaId: e.target.value })}
-            >
-              <option value="">Sin categoría / gasto fijo</option>
-              {categorias.map((cat) => (
-                <option key={cat.id} value={cat.id}>{cat.concepto}</option>
-              ))}
-            </select>
+            <SelectorCategoria
+              value={local.categoria}
+              onChange={(v) => setLocal({ ...local, categoria: v })}
+              gastosFijos={gastosFijos}
+              categorias={categorias}
+            />
           )}
+          {aviso && <div className="error-msg">{aviso}</div>}
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => onGuardar({ ...local, id: m.id })}>Guardar</button>
+            <button type="button" onClick={guardar}>Guardar</button>
             <button type="button" className="link-btn" onClick={onCancelar}>Cancelar</button>
           </div>
         </div>

@@ -351,6 +351,8 @@ button.borrar {
   cursor: pointer;
   display: block;
   color: var(--color-text);
+  font-weight: normal;
+  font-size: inherit;
 }
 .var-item-clicable:hover { background: none; opacity: 0.85; }
 .var-desplegable {
@@ -444,7 +446,73 @@ input[type="number"], input[type="text"], select { min-height: 44px; }
   .acciones-mov .mini-btn { padding: 3px 7px; }
   .acciones-mov .borrar { padding: 2px 3px; }
   .tabla-scroll { margin: 0 -8px; padding: 0 2px; }
-  .gf-editable { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .gf-editable { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .gf-editable input:first-child { grid-column: 1 / -1; }
   .cat-editable { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; }
 }
+
+/* Mes sí, mes no en gastos fijos */
+.gf-alterno { grid-column: 1 / -1; margin: -2px 0 8px; }
+.mes-alterno { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+label.check input[type="checkbox"] { width: auto; min-height: 0; accent-color: var(--color-primary); }
+label.check input[type="month"] { width: auto; padding: 4px 8px; min-height: 0; font-size: 0.85rem; }
+
+/* Proyección del mes */
+.proyeccion {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-primary-soft);
+  font-size: 0.82rem;
+  color: var(--color-text);
+}
+.proyeccion.mal { background: var(--color-gasto-soft); }
+
+/* Comparativa con tu media en gastos variables */
+.comparativa.sube { color: var(--color-gasto); }
+.comparativa.baja { color: var(--color-ingreso); }
+
+/* Ahorro mes a mes */
+.evolucion { display: flex; flex-direction: column; gap: 8px; }
+.evo-fila {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.evo-fila.actual .evo-mes { font-weight: 700; color: var(--color-primary-dark); }
+.evo-mes { color: var(--color-muted); text-transform: capitalize; }
+.evo-pista {
+  position: relative;
+  height: 12px;
+  background: var(--color-primary-soft);
+  border-radius: 999px;
+}
+.evo-barra {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-olive);
+}
+.evo-barra.cumple { background: var(--color-primary); }
+.evo-barra.negativa { background: var(--color-gasto); }
+.evo-meta {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--color-text);
+  opacity: 0.55;
+  border-radius: 1px;
+}
+.evo-valor { font-variant-numeric: tabular-nums; text-align: right; min-width: 92px; }
+.link-btn:hover { background: transparent; color: var(--color-primary-dark); }
