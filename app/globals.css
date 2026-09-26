@@ -253,6 +253,7 @@ button.borrar {
 }
 .var-resta { color: var(--color-ingreso); font-weight: 600; font-size: 0.85rem; }
 .var-resta.negativo { color: var(--color-gasto); }
+.var-resta.neutro { color: var(--color-primary); }
 .barra-fondo {
   background: var(--color-cream);
   border-radius: 999px;

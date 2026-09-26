@@ -192,9 +192,10 @@ export default function Home() {
     );
     const gastado = movsCategoria.reduce((s, m) => s + Number(m.gasto), 0);
     const presupuestado = Number(cat.importe);
-    const resta = presupuestado - gastado;
-    const porcentaje = presupuestado > 0 ? Math.min(100, (gastado / presupuestado) * 100) : gastado > 0 ? 100 : 0;
-    return { ...cat, gastado, resta, porcentaje, movimientos: movsCategoria };
+    const tieneMaximo = presupuestado > 0;
+    const resta = tieneMaximo ? presupuestado - gastado : 0;
+    const porcentaje = tieneMaximo ? Math.min(100, (gastado / presupuestado) * 100) : 0;
+    return { ...cat, gastado, tieneMaximo, resta, porcentaje, movimientos: movsCategoria };
   });
 
   async function guardarMovimiento(e) {
@@ -843,20 +844,28 @@ export default function Home() {
               >
                 <div className="var-item-top">
                   <span>{abierta ? "▾" : "▸"} {cat.concepto}</span>
-                  <span className={cat.resta < 0 ? "var-resta negativo" : "var-resta"}>
-                    {cat.resta < 0
-                      ? `Te has pasado ${money(Math.abs(cat.resta))}`
-                      : `Te quedan ${money(cat.resta)}`}
-                  </span>
+                  {cat.tieneMaximo ? (
+                    <span className={cat.resta < 0 ? "var-resta negativo" : "var-resta"}>
+                      {cat.resta < 0
+                        ? `Te has pasado ${money(Math.abs(cat.resta))}`
+                        : `Te quedan ${money(cat.resta)}`}
+                    </span>
+                  ) : (
+                    <span className="var-resta neutro">Llevas {money(cat.gastado)}</span>
+                  )}
                 </div>
-                <div className="barra-fondo">
-                  <div
-                    className={"barra-relleno" + (cat.resta < 0 ? " excedido" : "")}
-                    style={{ width: `${cat.porcentaje}%` }}
-                  />
-                </div>
+                {cat.tieneMaximo && (
+                  <div className="barra-fondo">
+                    <div
+                      className={"barra-relleno" + (cat.resta < 0 ? " excedido" : "")}
+                      style={{ width: `${cat.porcentaje}%` }}
+                    />
+                  </div>
+                )}
                 <div className="var-item-bottom">
-                  {money(cat.gastado)} de {money(cat.importe)}
+                  {cat.tieneMaximo
+                    ? `${money(cat.gastado)} de ${money(cat.importe)}`
+                    : "Sin máximo"}
                 </div>
               </button>
               {abierta && (
@@ -1003,10 +1012,11 @@ export default function Home() {
                 />
               </div>
               <div className="full">
-                <label>Presupuesto mensual (€)</label>
+                <label>Máximo al mes (€) — opcional</label>
                 <input
                   type="number"
                   step="0.01"
+                  placeholder="Déjalo vacío si no quieres límite"
                   value={nuevaCat.importe}
                   onChange={(e) => setNuevaCat({ ...nuevaCat, importe: e.target.value })}
                 />
@@ -1164,7 +1174,8 @@ function CategoriaEditable({ cat, onGuardar, onBorrar }) {
       <input
         type="number"
         step="0.01"
-        value={local.importe}
+        placeholder="Sin máximo"
+        value={Number(local.importe) ? local.importe : ""}
         onChange={(e) => setLocal({ ...local, importe: e.target.value })}
       />
       {cambiado && (
