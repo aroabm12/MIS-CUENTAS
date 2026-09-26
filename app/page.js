@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { descargarExcel, palabraClave } from "../lib/exportarExcel";
 
 function money(n) {
@@ -29,8 +29,31 @@ function diaEsHoy(diaStr, diaHoy) {
 }
 
 export default function Home() {
-  const hoy = useMemo(() => new Date(), []);
+  const [hoy, setHoy] = useState(() => new Date());
   const [mesSeleccionado, setMesSeleccionado] = useState(() => new Date());
+
+  // Si la app se queda abierta en segundo plano (p.ej. en el iPhone) y al
+  // volver ya ha cambiado el día, actualizamos "hoy"; y si ha cambiado el
+  // mes, volvemos a mostrar el mes en curso.
+  useEffect(() => {
+    function alVolver() {
+      if (document.visibilityState === "hidden") return;
+      const ahora = new Date();
+      setHoy((antes) => (antes.toDateString() === ahora.toDateString() ? antes : ahora));
+    }
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    window.addEventListener("pageshow", alVolver);
+    return () => {
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+      window.removeEventListener("pageshow", alVolver);
+    };
+  }, []);
+  const anioMesHoy = hoy.getFullYear() * 12 + hoy.getMonth();
+  useEffect(() => {
+    setMesSeleccionado(new Date());
+  }, [anioMesHoy]);
   const [movimientos, setMovimientos] = useState([]);
   const [saldoInicial, setSaldoInicial] = useState(0);
   const [config, setConfig] = useState({ meta_min: 450, meta_max: 500 });
