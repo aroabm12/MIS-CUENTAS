@@ -1,6 +1,6 @@
 * { box-sizing: border-box; }
 :root {
-  --color-bg: #f4f2eb;
+  --color-bg: #eef2f0;
   --color-card: #ffffff;
   --color-text: #3a3a34;
   --color-muted: #726f63;
@@ -13,8 +13,8 @@
   --color-gasto-soft: #f5e4e1;
   --color-olive: #a9aa85;
   --color-mauve: #a08384;
-  --color-cream: #d9d6ca;
-  --color-border: #e6e2d4;
+  --color-cream: #d7e0dc;
+  --color-border: #dde5e1;
 }
 body {
   margin: 0;
